@@ -162,7 +162,7 @@
     {% if current_user.role_edit() %}
     <div id="bulk-panel" class="hidden">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <h4><span id="bulk-count">0</span> {{_('selected')}} <a href="#" id="bulk-clear" class="pull-right small">{{_('Clear')}}</a></h4>
+      <h4><span id="bulk-count">0</span> {{_('selected')}} <a href="#" id="bulk-clear" class="pull-right small" title="{{_('Drop the selection and close the panel')}}">{{_('Done')}}</a></h4>
       <p class="small text-muted">{{_('Click a cover to select it. Drag a selected cover onto a shelf in the sidebar to add every selected book to it.')}}</p>
       <h5>{{_('Shelves')}} <small>{{_('click to add or remove')}}</small></h5>
       {% for shelf in g.shelves_access %}

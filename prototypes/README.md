@@ -34,6 +34,8 @@ Variants:
 
 Real storage would be new tables in `app.db` (`cps/ub.py`).
 
-Verdict: pending.
+Verdict (2026-10-19): **A** wins. A "Requests" page in the sidebar: a list
+sorted by votes, a request form with duplicate hints on top, tabs per status,
+and admin actions on each row. B and C are dropped.
 
 This branch is the primary source for that decision. Nothing here ships.

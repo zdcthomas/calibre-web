@@ -541,3 +541,22 @@ body.bulk-open > .container-fluid { margin-right: 300px; }
   #bulk-panel { top: auto; height: 50vh; width: 100%; border-left: 0; border-top: 1px solid #ddd; }
   body.bulk-open > .container-fluid { margin-right: 0; padding-bottom: 50vh; }
 }
+
+/* user comments: discussion thread on book and shelf pages */
+.user-comments { clear: both; max-width: 760px; padding-top: 20px; }
+.user-comment { padding: 8px 10px; border-top: 1px solid #e5e5e5; }
+.user-comment.mine { background: #eef5fb; }
+.user-comment-text { white-space: pre-wrap; word-wrap: break-word; margin: 3px 0; }
+.user-comment-actions { font-size: 12px; }
+.user-comment-actions details { display: inline-block; vertical-align: top; margin-right: 12px; }
+.user-comment-actions details[open] { display: block; margin: 4px 0; }
+.user-comment-actions summary { cursor: pointer; color: #337ab7; list-style: none; }
+.user-comment-actions summary::-webkit-details-marker { display: none; }
+.user-comment-actions summary.text-danger { color: #a94442; }
+.user-comment-actions form { margin-top: 4px; }
+.user-comment-actions form .btn { margin-top: 4px; }
+.user-comment-replies { margin-left: 32px; }
+.user-comment-mentions { background: #f7f7f7; border: 1px solid #e5e5e5; border-radius: 4px; padding: 8px 12px; margin-bottom: 10px; }
+.user-comment-new { margin-top: 12px; }
+.user-comment-new-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+.user-comment-new-row select { width: auto; max-width: 100%; }

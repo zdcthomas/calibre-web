@@ -1,0 +1,105 @@
+{# User discussion thread for a book or a shelf. Data comes from comments.thread_context(). #}
+{% macro comment_body(c, top_level) %}
+  <div class="user-comment{% if c.user_id == current_user.id %} mine{% endif %}" id="comment-{{ c.id }}">
+    <div class="user-comment-head">
+      {% if c.deleted %}
+        <strong>{{ _('Deleted') }}</strong>
+      {% else %}
+        <strong>{{ c.user.name if c.user else _('Deleted user') }}</strong>
+      {% endif %}
+      <span class="text-muted">· {{ c.created|formatdatetime }}{% if c.edited and not c.deleted %} · {{ _('edited') }}{% endif %}</span>
+      {% if top_level and c.about_book_id and comment_about_titles and comment_about_titles.get(c.about_book_id) %}
+        <span class="text-muted">· {{ _('about') }}</span>
+        <a class="label label-default" href="{{ url_for('web.show_book', book_id=c.about_book_id) }}">{{ comment_about_titles[c.about_book_id] }}</a>
+      {% endif %}
+    </div>
+    {% if c.deleted %}
+      <div class="user-comment-text text-muted"><em>{{ _('This comment was deleted.') }}</em></div>
+    {% else %}
+      <div class="user-comment-text">{{ c.text }}</div>
+      {% if current_user.is_authenticated %}
+      <div class="user-comment-actions">
+        {% if top_level %}
+        <details>
+          <summary>{{ _('Reply') }}</summary>
+          <form method="POST" action="{{ comment_post_url }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="parent_id" value="{{ c.id }}">
+            <textarea class="form-control input-sm" name="text" rows="2" required maxlength="5000"></textarea>
+            <button type="submit" class="btn btn-primary btn-xs">{{ _('Reply') }}</button>
+          </form>
+        </details>
+        {% endif %}
+        {% if can_edit_comment(c) %}
+        <details>
+          <summary>{{ _('Edit') }}</summary>
+          <form method="POST" action="{{ url_for('comments.edit_comment', comment_id=c.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <textarea class="form-control input-sm" name="text" rows="3" required maxlength="5000">{{ c.text }}</textarea>
+            <button type="submit" class="btn btn-primary btn-xs">{{ _('Save') }}</button>
+          </form>
+        </details>
+        {% endif %}
+        {% if can_delete_comment(c) %}
+        <details>
+          <summary class="text-danger">{% if c.user_id == current_user.id %}{{ _('Delete') }}{% else %}{{ _('Remove (admin)') }}{% endif %}</summary>
+          <form method="POST" action="{{ url_for('comments.delete_comment', comment_id=c.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {{ _('Delete this comment?') }}
+            <button type="submit" class="btn btn-danger btn-xs">{{ _('Delete') }}</button>
+          </form>
+        </details>
+        {% endif %}
+      </div>
+      {% endif %}
+    {% endif %}
+  </div>
+{% endmacro %}
+
+<div class="user-comments" id="comments">
+  {% if comment_mentions %}
+  <div class="user-comment-mentions">
+    <strong>{{ _('Mentioned in shelf discussions') }}</strong>
+    {% for c, s in comment_mentions %}
+      <div>
+        {{ c.user.name if c.user else _('Deleted user') }} {{ _('in') }}
+        <a href="{{ url_for('shelf.show_shelf', shelf_id=s.id) }}#comment-{{ c.id }}">{{ s.name }}</a>:
+        <span class="text-muted">{{ c.text|truncate(120) }}</span>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <h3>{{ _('Discussion') }} <small>{{ ngettext('%(num)s comment', '%(num)s comments', comment_count, num=comment_count) }}</small></h3>
+  {% for c, replies in comment_thread %}
+    {{ comment_body(c, True) }}
+    {% if replies %}
+    <div class="user-comment-replies">
+      {% for r in replies %}{{ comment_body(r, False) }}{% endfor %}
+    </div>
+    {% endif %}
+  {% else %}
+    <p class="text-muted">{{ _('No comments yet.') }}</p>
+  {% endfor %}
+
+  {% if current_user.is_authenticated %}
+  <form class="user-comment-new" method="POST" action="{{ comment_post_url }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <textarea class="form-control" name="text" rows="3" required maxlength="5000" placeholder="{{ _('Write a comment') }}"></textarea>
+    <div class="user-comment-new-row">
+      {% if comment_about_books %}
+      <select class="form-control input-sm" name="about_book_id">
+        <option value="">{{ _('About the whole shelf') }}</option>
+        {% for id, title in comment_about_books %}
+          <option value="{{ id }}">{{ _('About: %(title)s', title=title) }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
+      <button type="submit" class="btn btn-primary btn-sm">{{ _('Post comment') }}</button>
+      {% if comment_private %}
+        <span class="text-muted small">{{ _('Private shelf: only you see these comments.') }}</span>
+      {% endif %}
+    </div>
+  </form>
+  {% endif %}
+</div>

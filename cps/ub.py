@@ -390,6 +390,25 @@ class BookShelf(Base):
         return '<Book %r>' % self.id
 
 
+# User discussion comments on a book or on a shelf. Not the Calibre "comments" column (book description).
+# Exactly one of book_id and shelf_id is set. about_book_id ties a shelf comment to one book on that shelf.
+# parent_id holds one level of replies; a deleted comment that has replies keeps its row with deleted=True.
+class UserComment(Base):
+    __tablename__ = 'user_comment'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('user.id'))
+    book_id = Column(Integer, nullable=True, index=True)
+    shelf_id = Column(Integer, ForeignKey('shelf.id'), nullable=True, index=True)
+    about_book_id = Column(Integer, nullable=True, index=True)
+    parent_id = Column(Integer, ForeignKey('user_comment.id'), nullable=True)
+    text = Column(String, nullable=False)
+    deleted = Column(Boolean, default=False, nullable=False)
+    created = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    edited = Column(DateTime, nullable=True)
+    user = relationship("User")
+
+
 # This table keeps track of deleted Shelves so that deletes can be propagated to any paired Kobo device.
 class ShelfArchive(Base):
     __tablename__ = 'shelf_archive'
@@ -658,6 +677,35 @@ def delete_download(book_id):
         session.commit()
     except exc.OperationalError:
         session.rollback()
+
+# Remove one user comment. A top-level comment that still has replies stays as a "deleted" placeholder;
+# a reply that was the last one under a deleted placeholder takes the placeholder with it. No commit.
+def delete_user_comment(comment):
+    if comment.parent_id is None:
+        if session.query(UserComment).filter(UserComment.parent_id == comment.id).count():
+            comment.deleted = True
+            comment.text = ""
+            return
+        session.delete(comment)
+        return
+    parent = session.query(UserComment).filter(UserComment.id == comment.parent_id).first()
+    session.delete(comment)
+    session.flush()
+    if parent and parent.deleted and not session.query(UserComment).filter(UserComment.parent_id == parent.id).count():
+        session.delete(parent)
+
+
+# Remove the comments that belong to a deleted book, shelf or user. No commit.
+def delete_user_comments(book_id=None, shelf_ids=None, user_id=None):
+    if book_id is not None:
+        session.query(UserComment).filter(UserComment.book_id == book_id).delete()
+        session.query(UserComment).filter(UserComment.about_book_id == book_id).update({"about_book_id": None})
+    if shelf_ids:
+        session.query(UserComment).filter(UserComment.shelf_id.in_(shelf_ids)).delete()
+    if user_id is not None:
+        for comment in session.query(UserComment).filter(UserComment.user_id == user_id).all():
+            delete_user_comment(comment)
+
 
 # Generate user Guest (translated text), as anonymous user, no rights
 def create_anonymous_user(_session):

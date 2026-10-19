@@ -28,7 +28,7 @@ import mimetypes
 from uuid import uuid4
 
 from flask import Blueprint, request, url_for, g
-from flask_babel import format_date
+from flask_babel import format_date, format_datetime
 from .cw_login import current_user
 from .clean_html import clean_string as html_clean_string
 
@@ -86,6 +86,12 @@ def formatdate_filter(val):
                   current_user.name
                   )
         return val
+
+
+@jinjia.app_template_filter('formatdatetime')
+def formatdatetime_filter(val):
+    # app.db stores naive UTC; show it in the server's local time zone
+    return format_datetime(val.replace(tzinfo=datetime.timezone.utc).astimezone(), format='medium', rebase=False)
 
 
 @jinjia.app_template_filter('formatdateinput')

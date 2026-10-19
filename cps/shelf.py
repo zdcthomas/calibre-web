@@ -489,6 +489,7 @@ def delete_shelf_helper(cur_shelf):
     shelf_id = cur_shelf.id
     ub.session.delete(cur_shelf)
     ub.session.query(ub.BookShelf).filter(ub.BookShelf.shelf == shelf_id).delete()
+    ub.delete_user_comments(shelf_ids=[shelf_id])
     ub.session.add(ub.ShelfArchive(uuid=cur_shelf.uuid, user_id=cur_shelf.user_id))
     ub.session_commit("successfully deleted Shelf {}".format(cur_shelf.name))
     return True
@@ -507,6 +508,7 @@ def change_shelf_order(shelf_id, order):
 
 
 def render_show_shelf(shelf_type, shelf_id, page_no, sort_param):
+    from .comments import thread_context  # comments imports this module
     shelf = ub.session.query(ub.Shelf).filter(ub.Shelf.id == shelf_id).first()
     status = current_user.get_view_property("shelf", 'man')
     # check user is allowed to access shelf
@@ -572,7 +574,9 @@ def render_show_shelf(shelf_type, shelf_id, page_no, sort_param):
                                      shelf=shelf,
                                      page="shelf",
                                      status=status,
-                                     order=sort_param)
+                                     order=sort_param,
+                                     **(thread_context(shelf=shelf, shelf_books=[e.Books for e in result])
+                                        if shelf_type == 1 else {}))
     else:
         flash(_("Error opening shelf. Shelf does not exist or is not accessible"), category="error")
         return redirect(url_for("web.index"))

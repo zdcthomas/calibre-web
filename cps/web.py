@@ -59,6 +59,7 @@ from .services.worker import WorkerThread
 from .tasks_status import render_task_status
 from .usermanagement import user_login_required
 from .string_helper import strip_whitespaces
+from .comments import thread_context
 
 
 feature_support = {
@@ -1667,7 +1668,8 @@ def show_book(book_id):
                                      is_xhr=request.headers.get('X-Requested-With') == 'XMLHttpRequest',
                                      title=entry.title,
                                      books_shelfs=book_in_shelves,
-                                     page="book")
+                                     page="book",
+                                     **thread_context(book_id=book_id))
     else:
         log.debug("Selected book is unavailable. File does not exist or is not accessible")
         flash(_("Oops! Selected book is unavailable. File does not exist or is not accessible"),

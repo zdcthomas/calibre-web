@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book Requests</title>
+<!--
+  PROTOTYPE. Throwaway. Not production code.
+  Question: what should "book requests" (users ask for books that are not in the library) look like
+  in Calibre-Web, and what is the life of a request?
+  Three variants, switchable via ?variant=A|B|C (or #A|#B|#C) and the yellow bar at the top.
+    A  Requests page: a sortable list with a request form, tabs per status, admin actions per row.
+    B  Board: columns Requested / Looking / Fulfilled / Declined; the admin drags cards.
+    C  In the library: "Wanted" ghost covers above the book grid, and search offers "Request it"
+       when the library has no match. The admin uploads a book straight into a request.
+  Shared model: a request has voters ("want this"); the first voter is the requester. Withdraw = remove
+  your vote; a request with no voters goes away. Fulfil links the request to a library book and tells
+  every voter (bell in the navbar). Real storage would be new tables in app.db (cps/ub.py).
+  All state is in memory. Reload resets it.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/css/bootstrap.min.css">
+<style>
+  /* Layout: Calibre-Web standard theme chrome (navbar + left sidebar), variant content in #main. */
+  :root { --bg: #fff; --fg: #333; --muted: #777; --line: #e5e5e5; --soft: #f7f7f7; --accent: #337ab7; --mine: #eef5fb; --want: #f0ad4e; }
+  body { padding-top: 70px; padding-bottom: 60px; background: var(--bg); color: var(--fg); }
+  .navbar-brand { font-weight: bold; }
+  #sidebar { position: fixed; top: 51px; bottom: 0; left: 0; width: 200px; overflow-y: auto; background: #f8f8f8; border-right: 1px solid #e7e7e7; padding: 10px 0; }
+  #sidebar .nav > li > a { padding: 6px 15px; color: #333; cursor: pointer; }
+  #sidebar .nav > li.active > a { background: #e7e7e7; }
+  #sidebar .nav-header { padding: 10px 15px 4px; font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .04em; }
+  #main { margin-left: 200px; padding: 0 20px; }
+  @media (max-width: 767px) { #sidebar { position: static; width: auto; border-right: 0; } #main { margin-left: 0; padding: 0 16px; } body { padding-top: 110px; } }
+  .note { font-size: 12px; color: var(--muted); }
+  a[data-act], [data-act] { cursor: pointer; }
+
+  .cover { border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.3); display: flex; align-items: flex-end; padding: 8px; color: #fff; font-weight: bold; text-shadow: 0 1px 2px #000; font-size: 13px; line-height: 1.2; height: 190px; position: relative; }
+  .cover.tiny { width: 28px; height: 40px; padding: 0; flex: none; font-size: 0; }
+  .book { margin-bottom: 20px; position: relative; }
+  .book .meta { margin-top: 6px; font-size: 12px; }
+  .book .meta .title { font-weight: bold; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book .meta .author { color: var(--muted); }
+  .ribbon { position: absolute; top: 8px; left: -4px; background: #5cb85c; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 0 3px 3px 0; text-shadow: none; font-weight: normal; }
+
+  .av { display: inline-flex; width: 22px; height: 22px; border-radius: 50%; color: #fff; align-items: center; justify-content: center; font-weight: bold; font-size: 11px; margin-right: -4px; border: 2px solid #fff; }
+  .want-btn { white-space: nowrap; }
+  .want-btn.on { background: var(--want); border-color: #eea236; color: #fff; }
+  .status { font-weight: normal; }
+  .dup { margin-top: 6px; font-size: 12px; }
+  .dup .lib { color: #3c763d; }
+  .dup .req { color: #8a6d3b; }
+  .inline-box { background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 8px; margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .inline-box select, .inline-box input { width: auto; flex: 1; min-width: 160px; }
+
+  /* bell */
+  #bell-menu { position: absolute; right: 0; top: 100%; width: 320px; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,.2); z-index: 1500; padding: 6px 0; }
+  #bell-menu .item { padding: 6px 12px; font-size: 13px; border-bottom: 1px solid var(--line); }
+  #bell-menu .item:last-child { border-bottom: 0; }
+
+  /* A */
+  .a-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-start; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 10px; margin-bottom: 15px; }
+  .a-form .f { flex: 1; min-width: 160px; }
+  .a-table td { vertical-align: middle !important; }
+  .a-table tr.mine-row td { background: var(--mine); }
+  .a-table .wanted { text-align: center; width: 90px; }
+  .a-table .wanted b { display: block; font-size: 18px; }
+
+  /* B */
+  .b-board { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; padding-bottom: 10px; }
+  .b-col { flex: 1; min-width: 220px; background: #f4f5f7; border-radius: 4px; padding: 8px; min-height: 300px; }
+  .b-col.drop { outline: 2px dashed var(--accent); }
+  .b-col h4 { margin: 2px 4px 10px; font-size: 14px; display: flex; justify-content: space-between; }
+  .b-card { background: #fff; border-radius: 3px; box-shadow: 0 1px 2px rgba(0,0,0,.2); padding: 8px 10px; margin-bottom: 8px; }
+  .b-card.mine { border-left: 3px solid var(--accent); }
+  .b-card[draggable=true] { cursor: grab; }
+  .b-card .t { font-weight: bold; }
+  .b-card .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
+
+  /* C */
+  .c-wanted { background: repeating-linear-gradient(45deg, #fafafa, #fafafa 10px, #f3f3f3 10px, #f3f3f3 20px); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px 0; margin-bottom: 20px; }
+  .c-wanted h4 { margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  .ghost { border: 2px dashed #aaa; border-radius: 3px; height: 150px; display: flex; flex-direction: column; justify-content: space-between; padding: 8px; color: #555; background: rgba(255,255,255,.7); cursor: pointer; }
+  .ghost.sel { border-color: var(--accent); background: #fff; }
+  .ghost.looking { border-color: #5bc0de; }
+  .ghost .gt { font-weight: bold; font-size: 13px; line-height: 1.2; }
+  .c-detail { background: #fff; border: 1px solid #ccc; border-radius: 4px; padding: 12px; margin: 0 0 12px; }
+  .c-search-hint { background: #fcf8e3; border: 1px solid #faebcc; border-radius: 4px; padding: 10px 12px; margin-bottom: 15px; }
+
+  /* Prototype chrome */
+  #switcher { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: #ff0; color: #000; border: 2px solid #000; border-radius: 24px; padding: 5px 12px; z-index: 2000; font-family: monospace; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,.4); display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 16px); overflow-x: auto; }
+  #switcher button { background: #000; color: #ff0; border: 0; border-radius: 14px; min-width: 28px; height: 26px; font-weight: bold; padding: 0 8px; }
+  #switcher select { font-family: monospace; font-weight: bold; border: 1px solid #000; background: #fff; }
+  #state-toggle { position: fixed; top: 60px; right: 10px; z-index: 2001; }
+  #state { position: fixed; top: 95px; right: 10px; width: 380px; max-width: calc(100% - 20px); max-height: 70vh; overflow: auto; background: #222; color: #9f9; font: 11px/1.3 monospace; padding: 8px; z-index: 2001; white-space: pre; }
+  #state[hidden], #bell-menu[hidden] { display: none; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-default navbar-fixed-top">
+  <div class="container-fluid">
+    <div class="navbar-header"><a class="navbar-brand" data-act="go" data-page="books">Calibre-Web</a></div>
+    <form class="navbar-form navbar-left hidden-xs" onsubmit="return false"><div class="form-group"><input class="form-control" id="search" placeholder="Search Library" size="30" autocomplete="off"></div></form>
+    <ul class="nav navbar-nav navbar-right">
+      <li style="position:relative"><a data-act="bell" id="bell"></a><div id="bell-menu" hidden></div></li>
+      <li class="hidden-xs"><a>Upload</a></li>
+      <li class="hidden-xs"><a id="nav-user">zach</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div id="sidebar">
+  <div class="nav-header">Browse</div>
+  <ul class="nav" id="sidebar-nav"></ul>
+  <div class="nav-header">Shelves</div>
+  <ul class="nav"><li><a>Book club</a></li><li><a>To read</a></li></ul>
+</div>
+
+<div id="main"></div>
+
+<div id="switcher">
+  <button onclick="cycle(-1)" title="Previous variant">&larr;</button>
+  <span id="switcher-label"></span>
+  <button onclick="cycle(1)" title="Next variant">&rarr;</button>
+  <span>|</span>
+  <label style="margin:0">as <select id="as-user" onchange="me=this.value;ui.open=null;render()"><option>zach</option><option>maria</option><option>tom</option></select></label>
+</div>
+<button id="state-toggle" class="btn btn-xs btn-default" onclick="$('#state').prop('hidden',(i,h)=>!h)">state</button>
+<pre id="state" hidden></pre>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+// ---------- mock data ----------
+const USERS = { zach: { admin: true, color: '#337ab7' }, maria: { admin: false, color: '#8e44ad' }, tom: { admin: false, color: '#16a085' } };
+let me = 'zach';
+let library = [
+  { id: 1, title: 'Stories of Your Life', author: 'Ted Chiang', color: '#4a6274' },
+  { id: 2, title: 'Kindred', author: 'Octavia E. Butler', color: '#7a2e3b' },
+  { id: 3, title: 'The Guns of August', author: 'Barbara Tuchman', color: '#55606e' },
+  { id: 4, title: 'SPQR', author: 'Mary Beard', color: '#8a5a2b' },
+  { id: 5, title: 'Gilead', author: 'Marilynne Robinson', color: '#2f6f6a' },
+  { id: 6, title: 'The Fifth Season', author: 'N. K. Jemisin', color: '#3d3d5c' },
+  { id: 7, title: 'Hamnet', author: "Maggie O'Farrell", color: '#c08a2d' },
+  { id: 8, title: 'Player of Games', author: 'Iain M. Banks', color: '#2b4f7a' },
+];
+const day = n => new Date(2026, 9, 19 - n, 18, 0).getTime();
+let requests = [
+  { id: 1, title: 'The Overstory', author: 'Richard Powers', note: 'Book club pick for December.', votes: ['maria', 'tom', 'zach'], ts: day(9), status: 'open' },
+  { id: 2, title: 'Middlemarch', author: 'George Eliot', note: 'Any edition is fine.', votes: ['tom'], ts: day(6), status: 'open' },
+  { id: 3, title: 'Tomorrow, and Tomorrow, and Tomorrow', author: 'Gabrielle Zevin', note: '', votes: ['maria', 'zach'], ts: day(4), status: 'looking', doneBy: 'zach', doneTs: day(2) },
+  { id: 4, title: 'Kindred', author: 'Octavia E. Butler', note: '', votes: ['zach', 'maria'], ts: day(20), status: 'fulfilled', bookId: 2, doneBy: 'zach', doneTs: day(3), seen: ['zach'] },
+  { id: 5, title: 'Introduction to Algorithms', author: 'Cormen et al.', note: 'For work.', votes: ['tom'], ts: day(12), status: 'declined', reason: 'Too big for the e-readers. The city library has it.', doneBy: 'zach', doneTs: day(1), seen: [] },
+  { id: 6, title: 'Piranesi', author: 'Susanna Clarke', note: 'Saw it on the shelf at a friend\'s place.', votes: ['maria'], ts: day(1), status: 'open' },
+];
+let nextId = 100, clock = day(0);
+const VARIANTS = { A: 'Requests page (list)', B: 'Board (columns)', C: 'In the library (ghost covers)' };
+const STATUS = { open: ['Requested', 'default'], looking: ['Looking for it', 'info'], fulfilled: ['In the library', 'success'], declined: ['Declined', 'danger'] };
+const fromUrl = (location.hash.slice(1) || new URLSearchParams(location.search).get('variant') || 'A').toUpperCase();
+let variant = VARIANTS[fromUrl] ? fromUrl : 'A';
+let page = 'requests';
+let ui = { tab: 'open', open: null, openKind: null, query: '', sel: null, bell: false };
+let lastAction = '(none)';
+
+// ---------- model ----------
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const ago = ts => { const d = Math.round((day(0) - ts) / 864e5); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : d + ' days ago'; };
+const R = id => requests.find(r => r.id === id);
+const B = id => library.find(b => b.id === id);
+const isAdmin = () => USERS[me].admin;
+const wants = r => r.votes.includes(me);
+const by = r => r.votes[0];
+const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+const libMatches = q => q.length < 3 ? [] : library.filter(b => norm(b.title).includes(norm(q)) || norm(q).includes(norm(b.title)));
+const reqMatches = q => q.length < 3 ? [] : requests.filter(r => ['open', 'looking'].includes(r.status) && (norm(r.title).includes(norm(q)) || norm(q).includes(norm(r.title))));
+const updates = () => requests.filter(r => wants(r) && ['fulfilled', 'declined'].includes(r.status) && !(r.seen || []).includes(me));
+function log(s) { lastAction = s; }
+
+function create(title, author, note) {
+  title = title.trim(); author = author.trim();
+  if (!title) return false;
+  clock += 6e4;
+  requests.push({ id: nextId++, title, author, note: note.trim(), votes: [me], ts: clock, status: 'open' });
+  log(`${me} requested "${title}"`);
+  return true;
+}
+function vote(id) {
+  const r = R(id);
+  if (wants(r)) {
+    r.votes = r.votes.filter(v => v !== me);
+    if (!r.votes.length) { requests = requests.filter(x => x !== r); log(`${me} withdrew; "${r.title}" removed (no one wants it)`); return; }
+    log(`${me} no longer wants "${r.title}"`);
+  } else { r.votes.push(me); log(`${me} wants "${r.title}" too`); }
+}
+function setStatus(id, status, extra = {}) {
+  const r = R(id);
+  Object.assign(r, { status, doneBy: me, doneTs: (clock += 6e4), seen: [me] }, extra);
+  if (status === 'open' || status === 'looking') { delete r.bookId; delete r.reason; }
+  log(`${me} set "${r.title}" to ${status}`);
+}
+function uploadFor(id) {
+  const r = R(id);
+  const b = { id: library.length + 1, title: r.title, author: r.author || 'Unknown', color: ['#5b7083', '#6d4c7d', '#3f6d4e', '#8c4f3a'][library.length % 4], fresh: true };
+  library.push(b);
+  setStatus(id, 'fulfilled', { bookId: b.id });
+  log(`${me} uploaded "${b.title}" for request ${id}`);
+}
+function markSeen() { requests.forEach(r => { if (wants(r) && ['fulfilled', 'declined'].includes(r.status)) r.seen = [...new Set([...(r.seen || []), me])]; }); }
+
+// ---------- shared bits ----------
+const avatars = r => r.votes.map(v => `<span class="av" style="background:${USERS[v].color}" title="${v}">${v[0].toUpperCase()}</span>`).join('');
+const statusLabel = r => `<span class="label label-${STATUS[r.status][1]} status">${STATUS[r.status][0]}</span>`;
+function wantBtn(r, size = 'xs') {
+  if (!['open', 'looking'].includes(r.status)) return '';
+  const mineOnly = wants(r) && r.votes.length === 1;
+  return `<button class="btn btn-${size} btn-default want-btn${wants(r) ? ' on' : ''}" data-act="vote" data-id="${r.id}" title="${wants(r) ? (mineOnly ? 'Withdraw this request' : 'Remove your vote') : 'I want this too'}">${wants(r) ? '&#9733; You want this' : '&#9734; Want this too'}</button>`;
+}
+function outcome(r) {
+  if (r.status === 'fulfilled') { const b = B(r.bookId); return `Added by ${r.doneBy} ${ago(r.doneTs)}: <a data-act="open-book" data-id="${b.id}">${esc(b.title)}</a>`; }
+  if (r.status === 'declined') return `Declined by ${r.doneBy}: <i>${esc(r.reason)}</i>`;
+  if (r.status === 'looking') return `${r.doneBy} is looking for it`;
+  return '';
+}
+function dupHint(q) {
+  const libs = libMatches(q), reqs = reqMatches(q);
+  return libs.map(b => `<div class="lib">&#10003; Already in the library: <a data-act="open-book" data-id="${b.id}">${esc(b.title)}</a> by ${esc(b.author)}</div>`).join('') +
+    reqs.map(r => `<div class="req">&#9888; ${by(r)} already requested <b>${esc(r.title)}</b> (${r.votes.length} want it). ${wants(r) ? 'You want it too.' : `<a data-act="vote" data-id="${r.id}">Add your vote instead</a>`}</div>`).join('');
+}
+// Admin actions; the "kind" box (fulfil / decline) opens inline under the item.
+function adminActions(r, layout) {
+  if (!isAdmin()) return '';
+  const btn = (act, label, cls = 'default') => `<button class="btn btn-xs btn-${cls}" data-act="${act}" data-id="${r.id}">${label}</button>`;
+  const a = [];
+  if (r.status === 'open') a.push(btn('looking', 'Looking'));
+  if (['open', 'looking'].includes(r.status)) a.push(btn('box-fulfil', 'Fulfil', 'success'), btn('box-decline', 'Decline', 'danger'));
+  else a.push(btn('reopen', 'Reopen'));
+  return `<span class="btn-group-xs" style="display:inline-flex;gap:4px;flex-wrap:wrap">${a.join('')}</span>` + adminBox(r);
+}
+function adminBox(r) {
+  if (ui.open !== r.id) return '';
+  if (ui.openKind === 'fulfil') {
+    const guess = libMatches(r.title);
+    return `<div class="inline-box"><span>Link to a book in the library:</span>
+      <select class="form-control input-sm" id="fulfil-sel">${library.map(b => `<option value="${b.id}" ${guess[0] && guess[0].id === b.id ? 'selected' : ''}>${esc(b.title)} — ${esc(b.author)}</option>`).join('')}</select>
+      <button class="btn btn-sm btn-success" data-act="fulfil" data-id="${r.id}">Link</button>
+      <span>or</span><button class="btn btn-sm btn-primary" data-act="upload" data-id="${r.id}">Upload a file for it</button>
+      <a data-act="close">Cancel</a></div>`;
+  }
+  return `<div class="inline-box"><input class="form-control input-sm" id="decline-reason" placeholder="Reason, shown to everyone who wants it">
+    <button class="btn btn-sm btn-danger" data-act="decline" data-id="${r.id}">Decline</button><a data-act="close">Cancel</a></div>`;
+}
+
+// ---------- library grid (all variants) ----------
+function libraryGrid(list) {
+  return `<div class="row">${list.map(b => {
+    const req = requests.find(r => r.status === 'fulfilled' && r.bookId === b.id);
+    return `<div class="col-xs-6 col-sm-4 col-md-3 col-lg-2 book"><div class="cover" style="background:${b.color}" data-act="open-book" data-id="${b.id}">${esc(b.title)}
+      ${req && variant === 'C' ? `<span class="ribbon">Requested by ${by(req)}</span>` : ''}</div>
+      <div class="meta"><span class="title">${esc(b.title)}</span><span class="author">${esc(b.author)}</span></div></div>`;
+  }).join('')}</div>`;
+}
+function booksPage() {
+  const q = ui.query;
+  const list = q ? library.filter(b => norm(b.title + ' ' + b.author).includes(norm(q))) : library;
+  let hint = '';
+  if (q && variant !== 'C') hint = `<p class="note">${list.length} results for "${esc(q)}".${!list.length ? ` Not here? <a data-act="go" data-page="requests">Request it on the Requests page.</a>` : ''}</p>`;
+  return (variant === 'C' ? C.wanted() : '') + `<h2>${q ? 'Search' : 'Books'}</h2>` + (variant === 'C' ? C.searchHint(q, list) : hint) + libraryGrid(list);
+}
+function bookPage(id) {
+  const b = B(id), req = requests.find(r => r.status === 'fulfilled' && r.bookId === b.id);
+  return `<div class="row"><div class="col-sm-3"><div class="cover" style="background:${b.color};height:280px">${esc(b.title)}</div></div>
+    <div class="col-sm-9"><h2 style="margin-top:0">${esc(b.title)}</h2><p><a>${esc(b.author)}</a></p>
+    ${req ? `<div class="alert alert-success" style="max-width:600px">Added for a request by <b>${by(req)}</b>${req.votes.length > 1 ? ` (and ${req.votes.length - 1} more who wanted it)` : ''}. Fulfilled by ${req.doneBy} ${ago(req.doneTs)}.</div>` : ''}
+    <div class="btn-toolbar"><button class="btn btn-default">Download</button><button class="btn btn-default">Read in Browser</button></div></div></div>`;
+}
+
+// ---------- Variant A: requests page ----------
+const A = {
+  page() {
+    const tabs = { open: ['Open', r => ['open', 'looking'].includes(r.status)], fulfilled: ['In the library', r => r.status === 'fulfilled'], declined: ['Declined', r => r.status === 'declined'], mine: ['I want', r => wants(r)] };
+    const rows = requests.filter(tabs[ui.tab][1]).sort((x, y) => y.votes.length - x.votes.length || y.ts - x.ts);
+    return `<h2>Book requests</h2>
+      <div class="a-form">
+        <div class="f"><input class="form-control" id="rq-title" placeholder="Title" value="${esc(ui.draftTitle || '')}"><div class="dup" id="dup"></div></div>
+        <div class="f"><input class="form-control" id="rq-author" placeholder="Author (optional)"></div>
+        <div class="f"><input class="form-control" id="rq-note" placeholder="Note (optional, for example a format or edition)"></div>
+        <button class="btn btn-primary" data-act="create">Request book</button>
+      </div>
+      <ul class="nav nav-tabs" style="margin-bottom:0">${Object.entries(tabs).map(([k, [label, f]]) =>
+        `<li class="${ui.tab === k ? 'active' : ''}"><a data-act="tab" data-tab="${k}">${label} <span class="badge">${requests.filter(f).length}</span></a></li>`).join('')}</ul>
+      <table class="table a-table"><thead><tr><th class="wanted">Wanted by</th><th>Book</th><th>Requested</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map(r => `<tr class="${wants(r) ? 'mine-row' : ''}">
+        <td class="wanted"><b>${r.votes.length}</b>${avatars(r)}</td>
+        <td><b>${esc(r.title)}</b><br><span class="note">${esc(r.author)}</span>${r.note ? `<br><span class="note"><i>"${esc(r.note)}"</i></span>` : ''}</td>
+        <td class="note">${by(r)}<br>${ago(r.ts)}</td>
+        <td>${statusLabel(r)}<div class="note" style="margin-top:4px">${outcome(r)}</div></td>
+        <td style="min-width:220px">${wantBtn(r)} ${adminActions(r)}</td></tr>`).join('') || '<tr><td colspan="5" class="note">Nothing here.</td></tr>'}
+      </tbody></table>`;
+  },
+};
+
+// ---------- Variant B: board ----------
+const Bv = {
+  page() {
+    const cols = ['open', 'looking', 'fulfilled', 'declined'];
+    return `<h2>Book requests <small>${isAdmin() ? 'drag a card to change its status' : 'only an admin moves cards'}</small></h2>
+      <div class="b-board">${cols.map(st => {
+        const cards = requests.filter(r => r.status === st).sort((x, y) => y.votes.length - x.votes.length || y.ts - x.ts);
+        return `<div class="b-col" data-col="${st}"><h4><span>${STATUS[st][0]}</span><span class="badge">${cards.length}</span></h4>
+          ${st === 'open' ? `<div class="b-card"><input class="form-control input-sm" id="rq-title" placeholder="Title of the book you want" value="${esc(ui.draftTitle || '')}">
+            <div class="dup" id="dup"></div>
+            <input class="form-control input-sm" id="rq-author" placeholder="Author (optional)" style="margin-top:4px">
+            <input class="form-control input-sm" id="rq-note" placeholder="Note (optional)" style="margin-top:4px">
+            <button class="btn btn-primary btn-xs" data-act="create" style="margin-top:6px">Request</button></div>` : ''}
+          ${cards.map(r => `<div class="b-card${wants(r) ? ' mine' : ''}" draggable="${isAdmin()}" data-drag="${r.id}">
+            <div class="t">${esc(r.title)}</div><div class="note">${esc(r.author)}</div>
+            ${r.note ? `<div class="note"><i>"${esc(r.note)}"</i></div>` : ''}
+            ${outcome(r) ? `<div class="note" style="margin-top:4px">${outcome(r)}</div>` : ''}
+            <div class="foot"><span>${avatars(r)}</span>${wantBtn(r)}</div>
+            ${adminBox(r)}</div>`).join('')}</div>`;
+      }).join('')}</div>`;
+  },
+};
+
+// ---------- Variant C: in the library ----------
+const C = {
+  wanted() {
+    const open = requests.filter(r => ['open', 'looking'].includes(r.status)).sort((x, y) => y.votes.length - x.votes.length || y.ts - x.ts);
+    const sel = ui.sel && R(ui.sel) && ['open', 'looking'].includes(R(ui.sel).status) ? R(ui.sel) : null;
+    return `<div class="c-wanted"><h4><span>Wanted <small>${open.length} books people asked for</small></span>
+        <a class="btn btn-xs btn-default" data-act="c-new">+ Request a book</a></h4>
+      ${ui.cNew ? `<div class="c-detail"><div class="row"><div class="col-sm-4"><input class="form-control input-sm" id="rq-title" placeholder="Title" value="${esc(ui.draftTitle || '')}"><div class="dup" id="dup"></div></div>
+        <div class="col-sm-3"><input class="form-control input-sm" id="rq-author" placeholder="Author (optional)" value="${esc(ui.draftAuthor || '')}"></div>
+        <div class="col-sm-3"><input class="form-control input-sm" id="rq-note" placeholder="Note (optional)"></div>
+        <div class="col-sm-2"><button class="btn btn-primary btn-sm" data-act="create">Request</button> <a data-act="c-new">Cancel</a></div></div></div>` : ''}
+      ${sel ? `<div class="c-detail"><button class="close" data-act="c-sel" data-id="${sel.id}">&times;</button>
+        <b>${esc(sel.title)}</b> <span class="note">${esc(sel.author)}</span> ${statusLabel(sel)}
+        <div class="note">Requested by ${by(sel)} ${ago(sel.ts)}${sel.note ? ` · <i>"${esc(sel.note)}"</i>` : ''}</div>
+        <div style="margin:6px 0">${avatars(sel)} <span class="note" style="margin-left:8px">${sel.votes.join(', ')} ${sel.votes.length === 1 ? 'wants' : 'want'} this</span></div>
+        ${outcome(sel) ? `<div class="note">${outcome(sel)}</div>` : ''}
+        <div style="margin-top:6px">${wantBtn(sel, 'sm')} ${isAdmin() ? `<button class="btn btn-sm btn-primary" data-act="upload" data-id="${sel.id}">Upload a file for it</button>
+          ${sel.status === 'open' ? `<button class="btn btn-sm btn-default" data-act="looking" data-id="${sel.id}">Looking</button>` : ''}
+          <button class="btn btn-sm btn-default" data-act="box-fulfil" data-id="${sel.id}">Link a book</button>
+          <button class="btn btn-sm btn-default" data-act="box-decline" data-id="${sel.id}">Decline</button>` : ''}</div>
+        ${adminBox(sel)}</div>` : ''}
+      <div class="row">${open.map(r => `<div class="col-xs-6 col-sm-4 col-md-3 col-lg-2" style="margin-bottom:10px">
+        <div class="ghost${sel === r ? ' sel' : ''}${r.status === 'looking' ? ' looking' : ''}" data-act="c-sel" data-id="${r.id}">
+          <div><div class="gt">${esc(r.title)}</div><div class="note">${esc(r.author)}</div></div>
+          <div><div class="note">${r.status === 'looking' ? 'Looking for it · ' : ''}${r.votes.length} want${r.votes.length === 1 ? 's' : ''} this</div>${avatars(r)}</div></div></div>`).join('')}</div>
+      ${C.closed()}</div>`;
+  },
+  closed() {
+    const mine = requests.filter(r => wants(r) && r.status === 'declined');
+    return mine.length ? `<p class="note">Declined: ${mine.map(r => `<b>${esc(r.title)}</b> (${esc(r.reason)})`).join('; ')}</p>` : '';
+  },
+  searchHint(q, list) {
+    if (!q) return '';
+    const reqs = reqMatches(q);
+    return `<div class="c-search-hint">${list.length ? `${list.length} books match "${esc(q)}". ` : `No book in the library matches "<b>${esc(q)}</b>". `}
+      ${reqs.length ? reqs.map(r => `${by(r)} already asked for <b>${esc(r.title)}</b> (${r.votes.length} want it). ${wantBtn(r)}`).join('<br>')
+        : `${list.length ? 'Not the one?' : 'Want it?'} <button class="btn btn-xs btn-primary" data-act="c-request-q">Request "${esc(q)}"</button>`}</div>`;
+  },
+};
+
+// ---------- actions ----------
+$(document).on('click', '[data-act]', function (e) {
+  e.preventDefault(); e.stopPropagation();
+  const el = $(this), act = el.data('act'), id = +el.data('id');
+  switch (act) {
+    case 'go': page = el.data('page'); ui.query = ''; $('#search').val(''); break;
+    case 'open-book': page = 'book:' + id; if (ui.bell) markSeen(); ui.bell = false; break;
+    case 'tab': ui.tab = el.data('tab'); break;
+    case 'create':
+      if (create($('#rq-title').val(), $('#rq-author').val(), $('#rq-note').val())) { ui.draftTitle = ui.draftAuthor = ''; ui.cNew = false; ui.tab = 'open'; if (variant === 'C') { page = 'books'; ui.query = ''; $('#search').val(''); } }
+      break;
+    case 'vote': vote(id); break;
+    case 'looking': setStatus(id, 'looking'); ui.open = null; break;
+    case 'reopen': setStatus(id, 'open'); break;
+    case 'box-fulfil': ui.open = id; ui.openKind = 'fulfil'; break;
+    case 'box-decline': ui.open = id; ui.openKind = 'decline'; break;
+    case 'close': ui.open = null; break;
+    case 'fulfil': setStatus(id, 'fulfilled', { bookId: +$('#fulfil-sel').val() }); ui.open = null; break;
+    case 'decline': {
+      const reason = $('#decline-reason').val().trim();
+      if (!reason) { $('#decline-reason').attr('placeholder', 'A reason is needed').focus(); return; }
+      setStatus(id, 'declined', { reason }); ui.open = null; break;
+    }
+    case 'upload': uploadFor(id); ui.open = null; ui.sel = null; break;
+    case 'bell': ui.bell = !ui.bell; if (!ui.bell) markSeen(); break;
+    case 'c-sel': ui.sel = ui.sel === id ? null : id; ui.open = null; break;
+    case 'c-new': ui.cNew = !ui.cNew; break;
+    case 'c-request-q': ui.cNew = true; ui.draftTitle = ui.query; page = 'books'; ui.query = ''; $('#search').val(''); break;
+  }
+  render();
+  if (act === 'c-new' || act === 'c-request-q') $('#rq-title').focus().trigger('input');
+});
+$(document).on('input', '#rq-title', function () { ui.draftTitle = this.value; $('#dup').html(dupHint(this.value)); });
+$('#search').on('input', function () { ui.query = this.value.trim(); if (page !== 'books') page = 'books'; render(); this.focus(); });
+// B: drag and drop between columns (admin only)
+$(document).on('dragstart', '[data-drag]', function (e) { e.originalEvent.dataTransfer.setData('text/plain', $(this).data('drag')); });
+$(document).on('dragover', '.b-col', function (e) { e.preventDefault(); $(this).addClass('drop'); });
+$(document).on('dragleave', '.b-col', function () { $(this).removeClass('drop'); });
+$(document).on('drop', '.b-col', function (e) {
+  e.preventDefault();
+  const id = +e.originalEvent.dataTransfer.getData('text/plain'), col = $(this).data('col');
+  if (!id || R(id).status === col) return render();
+  if (col === 'fulfilled') { ui.open = id; ui.openKind = 'fulfil'; }
+  else if (col === 'declined') { ui.open = id; ui.openKind = 'decline'; }
+  else setStatus(id, col);
+  render();
+});
+function cycle(d) {
+  const keys = Object.keys(VARIANTS);
+  variant = keys[(keys.indexOf(variant) + d + keys.length) % keys.length];
+  try { history.replaceState(null, '', '?variant=' + variant); } catch (err) {}
+  ui = { tab: 'open', open: null, openKind: null, query: '', sel: null, bell: false };
+  $('#search').val('');
+  page = variant === 'C' ? 'books' : 'requests';
+  render();
+}
+document.addEventListener('keydown', e => {
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+// ---------- render ----------
+function render() {
+  if (variant === 'C' && page === 'requests') page = 'books';
+  let html;
+  if (page.startsWith('book:')) html = bookPage(+page.split(':')[1]);
+  else if (page === 'books') html = booksPage();
+  else html = variant === 'A' ? A.page() : Bv.page();
+  $('#main').html(html);
+  if ($('#rq-title').length && ui.draftTitle) $('#dup').html(dupHint(ui.draftTitle));
+  const nav = [['books', 'Books'], ...(variant === 'C' ? [] : [['requests', `Requests <span class="badge">${requests.filter(r => ['open', 'looking'].includes(r.status)).length}</span>`]])];
+  $('#sidebar-nav').html(nav.map(([p, label]) => `<li class="${page === p ? 'active' : ''}"><a data-act="go" data-page="${p}">${label}</a></li>`).join('') +
+    '<li><a>Recently Added</a></li><li><a>Authors</a></li><li><a>Series</a></li>');
+  const ups = updates();
+  $('#bell').html(`&#128276;${ups.length ? ` <span class="badge" style="background:#d9534f">${ups.length}</span>` : ''}`);
+  $('#bell-menu').prop('hidden', !ui.bell).html(ups.length ? ups.map(r => `<div class="item">${r.status === 'fulfilled'
+      ? `&#10003; <b>${esc(r.title)}</b> is in the library. <a data-act="open-book" data-id="${r.bookId}">Open it</a>`
+      : `&#10007; <b>${esc(r.title)}</b> was declined: <i>${esc(r.reason)}</i>`}</div>`).join('') : '<div class="item note">No news about your requests.</div>');
+  $('#nav-user').text(me + (isAdmin() ? ' (admin)' : ''));
+  $('#switcher-label').text(variant + ' (' + VARIANTS[variant] + ')');
+  $('#state').text(JSON.stringify({ variant, me, admin: isAdmin(), page, ui, lastAction, unreadForMe: ups.map(r => r.id),
+    requests: requests.map(r => ({ id: r.id, title: r.title, status: r.status, votes: r.votes, bookId: r.bookId, reason: r.reason, doneBy: r.doneBy, seen: r.seen })),
+    libraryCount: library.length }, null, 1));
+}
+if (variant === 'C') page = 'books';
+render();
+</script>
+</body>
+</html>

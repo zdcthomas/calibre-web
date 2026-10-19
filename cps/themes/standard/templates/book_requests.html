@@ -1,0 +1,139 @@
+{% extends theme("layout.html") %}
+{% macro requester(r) %}{{ r.votes[0].user.name if r.votes and r.votes[0].user else _('Deleted user') }}{% endmacro %}
+{% block body %}
+<div class="book-requests">
+  <h2>{{ _('Book requests') }}</h2>
+
+  {% if news %}
+  <div class="alert alert-info">
+    <strong>{{ _('News about books you wanted') }}</strong>
+    {% for r in news %}
+      <div>
+        {% if r.status == 'fulfilled' %}
+          <span class="glyphicon glyphicon-ok"></span> {{ _('%(title)s is in the library.', title=r.title) }}
+          {% if r.book_id in books %}<a href="{{ url_for('web.show_book', book_id=r.book_id) }}">{{ _('Open it') }}</a>{% endif %}
+        {% else %}
+          <span class="glyphicon glyphicon-remove"></span> {{ _('%(title)s was declined:', title=r.title) }} <em>{{ r.reason }}</em>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form class="request-form" method="POST" action="{{ url_for('book_requests.new_request') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="tab" value="{{ tab }}">
+    <div class="request-form-fields">
+      <div class="request-form-title">
+        <input class="form-control" id="request-title" name="title" placeholder="{{ _('Title') }}" required maxlength="200" autocomplete="off">
+        <div id="request-hints" data-check-url="{{ url_for('book_requests.check_request') }}"
+             data-in-library="{{ _('Already in the library:') }}" data-requested="{{ _('Already requested by %(name)s', name='{by}') }}"
+             data-votes="{{ _('{n} want it') }}" data-you-want="{{ _('You want it too.') }}" data-add-vote="{{ _('Add your vote instead') }}"></div>
+      </div>
+      <input class="form-control" name="author" placeholder="{{ _('Author (optional)') }}" maxlength="500">
+      <input class="form-control" name="note" placeholder="{{ _('Note (optional, for example a format or edition)') }}" maxlength="500">
+      <button type="submit" class="btn btn-primary">{{ _('Request book') }}</button>
+    </div>
+  </form>
+
+  <ul class="nav nav-tabs">
+    {% for key, label in [('open', _('Open')), ('fulfilled', _('In the library')), ('declined', _('Declined')), ('mine', _('I want'))] %}
+      <li {% if tab == key %}class="active"{% endif %}><a href="{{ url_for('book_requests.list_requests', tab=key) }}">{{ label }} <span class="badge">{{ counts[key] }}</span></a></li>
+    {% endfor %}
+  </ul>
+
+  <div class="table-responsive">
+  <table class="table request-table">
+    <thead><tr><th class="request-wanted">{{ _('Wanted by') }}</th><th>{{ _('Book') }}</th><th>{{ _('Requested') }}</th><th>{{ _('Status') }}</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr id="request-{{ r.id }}" {% if wants(r) %}class="request-mine"{% endif %}>
+        <td class="request-wanted"><strong>{{ r.votes|length }}</strong>
+          <div class="small text-muted">{% for v in r.votes %}{{ v.user.name if v.user else '?' }}{{ ', ' if not loop.last }}{% endfor %}</div></td>
+        <td><strong>{{ r.title }}</strong>
+          {% if r.author %}<div class="text-muted">{{ r.author }}</div>{% endif %}
+          {% if r.note %}<div class="small text-muted"><em>"{{ r.note }}"</em></div>{% endif %}</td>
+        <td class="small text-muted">{{ requester(r) }}<br>{{ r.created|formatdate }}</td>
+        <td>
+          {% if r.status == 'open' %}<span class="label label-default">{{ _('Requested') }}</span>
+          {% elif r.status == 'looking' %}<span class="label label-info">{{ _('Looking for it') }}</span>
+          {% elif r.status == 'fulfilled' %}<span class="label label-success">{{ _('In the library') }}</span>
+          {% else %}<span class="label label-danger">{{ _('Declined') }}</span>{% endif %}
+          <div class="small text-muted request-outcome">
+            {% set who = r.done_by_user.name if r.done_by_user else _('an admin') %}
+            {% if r.status == 'looking' %}{{ _('%(name)s is looking for it', name=who) }}
+            {% elif r.status == 'fulfilled' %}
+              {% if r.book_id in books %}{{ _('Added by %(name)s:', name=who) }} <a href="{{ url_for('web.show_book', book_id=r.book_id) }}">{{ books[r.book_id].title }}</a>
+              {% else %}{{ _('The book is no longer in the library.') }}{% endif %}
+            {% elif r.status == 'declined' %}{{ _('Declined by %(name)s:', name=who) }} <em>{{ r.reason }}</em>{% endif %}
+          </div>
+        </td>
+        <td class="request-actions">
+          {% if r.is_open or wants(r) %}
+          <form method="POST" action="{{ url_for('book_requests.vote', request_id=r.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="tab" value="{{ tab }}">
+            {% if wants(r) %}
+              <button type="submit" class="btn btn-xs btn-warning" title="{% if r.votes|length == 1 %}{{ _('Withdraw this request') }}{% else %}{{ _('Remove your vote') }}{% endif %}"><span class="glyphicon glyphicon-star"></span> {% if r.votes|length == 1 %}{{ _('Withdraw') }}{% else %}{{ _('You want this') }}{% endif %}</button>
+            {% else %}
+              <button type="submit" class="btn btn-xs btn-default"><span class="glyphicon glyphicon-star-empty"></span> {{ _('Want this too') }}</button>
+            {% endif %}
+          </form>
+          {% endif %}
+          {% if current_user.role_admin() %}
+            {% if r.status == 'open' %}
+            <form method="POST" action="{{ url_for('book_requests.set_status', request_id=r.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tab" value="{{ tab }}">
+              <button type="submit" name="action" value="looking" class="btn btn-xs btn-default">{{ _('Looking') }}</button>
+            </form>
+            {% endif %}
+            {% if r.is_open %}
+            <details>
+              <summary class="btn btn-xs btn-success">{{ _('Fulfil') }}</summary>
+              <form method="POST" action="{{ url_for('book_requests.set_status', request_id=r.id) }}" class="request-admin-box">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tab" value="{{ tab }}">
+                <select class="form-control input-sm" name="book_id">
+                  {% for b in candidates.get(r.id, []) %}<option value="{{ b.id }}">{{ b.title }} ({{ b.authors|map(attribute='name')|join(' & ') }})</option>{% endfor %}
+                  <option value="">{{ _('Other book: enter its ID below') }}</option>
+                </select>
+                <input class="form-control input-sm" type="number" name="book_id_other" min="1" placeholder="{{ _('Book ID, from the address of the book page') }}">
+                <button type="submit" name="action" value="fulfil" class="btn btn-sm btn-success">{{ _('Mark as in the library') }}</button>
+                <div class="small text-muted">{{ _('Upload the file first, then link the request to the new book.') }}</div>
+              </form>
+            </details>
+            <details>
+              <summary class="btn btn-xs btn-danger">{{ _('Decline') }}</summary>
+              <form method="POST" action="{{ url_for('book_requests.set_status', request_id=r.id) }}" class="request-admin-box">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tab" value="{{ tab }}">
+                <input class="form-control input-sm" name="reason" required maxlength="500" placeholder="{{ _('Reason, shown to everyone who wants it') }}">
+                <button type="submit" name="action" value="decline" class="btn btn-sm btn-danger">{{ _('Decline') }}</button>
+              </form>
+            </details>
+            {% else %}
+            <form method="POST" action="{{ url_for('book_requests.set_status', request_id=r.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tab" value="{{ tab }}">
+              <button type="submit" name="action" value="reopen" class="btn btn-xs btn-default">{{ _('Reopen') }}</button>
+            </form>
+            {% endif %}
+            <details>
+              <summary class="btn btn-xs btn-link text-danger">{{ _('Delete') }}</summary>
+              <form method="POST" action="{{ url_for('book_requests.set_status', request_id=r.id) }}" class="request-admin-box">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tab" value="{{ tab }}">
+                {{ _('Delete this request and its votes?') }}
+                <button type="submit" name="action" value="delete" class="btn btn-xs btn-danger">{{ _('Delete') }}</button>
+              </form>
+            </details>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="text-muted">{{ _('No requests here.') }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}
+{% block js %}
+<script src="{{ url_for('static', filename='js/book_requests.js') }}"></script>
+{% endblock %}

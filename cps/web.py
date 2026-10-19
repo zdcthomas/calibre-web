@@ -60,6 +60,7 @@ from .tasks_status import render_task_status
 from .usermanagement import user_login_required
 from .string_helper import strip_whitespaces
 from .comments import thread_context
+from .book_requests import fulfilled_request
 
 
 feature_support = {
@@ -1669,6 +1670,7 @@ def show_book(book_id):
                                      title=entry.title,
                                      books_shelfs=book_in_shelves,
                                      page="book",
+                                     fulfilled_request=fulfilled_request(book_id),
                                      **thread_context(book_id=book_id))
     else:
         log.debug("Selected book is unavailable. File does not exist or is not accessible")

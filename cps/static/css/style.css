@@ -560,3 +560,22 @@ body.bulk-open > .container-fluid { margin-right: 300px; }
 .user-comment-new { margin-top: 12px; }
 .user-comment-new-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
 .user-comment-new-row select { width: auto; max-width: 100%; }
+
+/* book requests page */
+.request-form { background: #f7f7f7; border: 1px solid #e5e5e5; border-radius: 4px; padding: 10px; margin-bottom: 15px; }
+.request-form-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.request-form-fields > * { flex: 1 1 180px; min-width: 0; }
+.request-form-fields > button { flex: 0 0 auto; }
+#request-hints { font-size: 12px; margin-top: 4px; }
+.request-hint-library { color: #3c763d; }
+.request-hint-request { color: #8a6d3b; }
+.request-table td { vertical-align: middle !important; }
+.request-table tr.request-mine td { background: #eef5fb; }
+.request-wanted { text-align: center; width: 110px; }
+.request-wanted strong { font-size: 18px; }
+.request-actions { min-width: 220px; }
+.request-actions form, .request-actions details { display: inline-block; vertical-align: top; margin: 0 4px 4px 0; }
+.request-actions details[open] { display: block; }
+.request-actions summary { list-style: none; }
+.request-actions summary::-webkit-details-marker { display: none; }
+.request-admin-box { display: flex !important; flex-direction: column; gap: 4px; background: #f7f7f7; border: 1px solid #e5e5e5; border-radius: 4px; padding: 6px; margin-top: 4px; max-width: 360px; }

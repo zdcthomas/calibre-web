@@ -284,6 +284,13 @@
             {% endif %}
 
 
+            {% if fulfilled_request %}
+                <p class="text-success"><span class="glyphicon glyphicon-gift"></span>
+                    {{ _('Added for a request by %(name)s.', name=(fulfilled_request.votes[0].user.name if fulfilled_request.votes and fulfilled_request.votes[0].user else _('a deleted user'))) }}
+                    <a href="{{ url_for('book_requests.list_requests', tab='fulfilled') }}#request-{{ fulfilled_request.id }}">{{ _('See the request') }}</a>
+                </p>
+            {% endif %}
+
             {% if entry.comments|length > 0 and entry.comments[0].text|length > 0 %}
                 <div class="comments">
                     <h3 id="decription">{{ _('Description:') }}</h3>

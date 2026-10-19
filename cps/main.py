@@ -41,6 +41,7 @@ def main():
     from .search_metadata import meta
     from .shelf import shelf
     from .comments import comments
+    from .book_requests import book_requests
     from .tasks_status import tasks
     from .error_handler import init_errorhandler
     from .remotelogin import remotelogin
@@ -73,6 +74,7 @@ def main():
     app.register_blueprint(about)
     app.register_blueprint(shelf)
     app.register_blueprint(comments)
+    app.register_blueprint(book_requests)
     app.register_blueprint(admi)
     app.register_blueprint(remotelogin)
     app.register_blueprint(meta)

@@ -2077,6 +2077,7 @@ def _delete_user(content):
             ub.session.query(ub.ReadBook).filter(content.id == ub.ReadBook.user_id).delete()
             ub.session.query(ub.Downloads).filter(content.id == ub.Downloads.user_id).delete()
             ub.delete_user_comments(user_id=content.id)
+            ub.delete_book_request_votes(content.id)
             ub.delete_user_comments(shelf_ids=[s.id for s in ub.session.query(ub.Shelf)
                                     .filter(content.id == ub.Shelf.user_id)])
             for us in ub.session.query(ub.Shelf).filter(content.id == ub.Shelf.user_id):

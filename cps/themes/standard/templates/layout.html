@@ -64,6 +64,9 @@
                     </form>
                   </li>
               {% endif %}
+              {% if not current_user.is_anonymous and requests_news %}
+                <li><a id="top_requests" href="{{url_for('book_requests.list_requests', tab='mine')}}" title="{{_('News about books you requested')}}"><span class="glyphicon glyphicon-bell"></span> <span class="badge" style="background:#d9534f">{{ requests_news }}</span></a></li>
+              {% endif %}
               {% if not current_user.is_anonymous and not simple%}
                 <li class="top_tasks"><a id="top_tasks" href="{{url_for('tasks.get_tasks_status')}}"><span class="glyphicon glyphicon-tasks"></span> <span class="hidden-sm">{{_('Tasks')}}</span></a></li>
               {% endif %}
@@ -118,6 +121,9 @@
                     <li id="nav_{{element['id']}}" {% if page == element['page'] %}class="active"{% endif %}><a href="{% if element['no_param'] %}{{url_for(element['link'], data=element['page'])}}{%else%}{{url_for(element['link'], data=element['page'], sort_param='stored')}}{% endif %}"><span class="glyphicon {{element['glyph']}}"></span> {{_(element['text'])}}</a></li>
                 {% endif %}
               {% endfor %}
+              {% if not current_user.is_anonymous %}
+                <li id="nav_requests" {% if page == 'requests' %}class="active"{% endif %}><a href="{{url_for('book_requests.list_requests')}}"><span class="glyphicon glyphicon-gift"></span> {{_('Requests')}}{% if requests_open %} <span class="badge badge-sm">{{ requests_open }}</span>{% endif %}</a></li>
+              {% endif %}
               {% if current_user.is_authenticated or g.allow_anonymous %}
                 <li class="nav-head hidden-xs public-shelves">{{_('Shelves')}}</li>
                 {% for shelf in g.shelves_access %}

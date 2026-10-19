@@ -1045,6 +1045,7 @@ def delete_whole_book(book_id, book):
     ub.session.query(ub.ReadBook).filter(ub.ReadBook.book_id == book_id).delete()
     ub.delete_download(book_id)
     ub.delete_user_comments(book_id=book_id)
+    ub.unlink_book_requests(book_id)
     ub.session_commit()
 
     # check if only this book links to:

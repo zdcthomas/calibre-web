@@ -409,6 +409,48 @@ class UserComment(Base):
     user = relationship("User")
 
 
+# A user asks for a book that is not in the library. Users "want" a request through BookRequestVote;
+# the earliest vote is the requester, and a request without votes is deleted. An admin sets the status;
+# a fulfilled request links to a library book (book_id), a declined one carries a reason.
+class BookRequest(Base):
+    __tablename__ = 'book_request'
+
+    STATUS_OPEN = 'open'
+    STATUS_LOOKING = 'looking'
+    STATUS_FULFILLED = 'fulfilled'
+    STATUS_DECLINED = 'declined'
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False)
+    author = Column(String, default="")
+    note = Column(String, default="")
+    status = Column(String, default=STATUS_OPEN, nullable=False, index=True)
+    book_id = Column(Integer, nullable=True)
+    reason = Column(String, default="")
+    done_by = Column(Integer, ForeignKey('user.id'), nullable=True)
+    done_at = Column(DateTime, nullable=True)
+    created = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    votes = relationship("BookRequestVote", backref="request", cascade="all, delete-orphan",
+                         order_by="BookRequestVote.created, BookRequestVote.id")
+    done_by_user = relationship("User", foreign_keys=[done_by])
+
+    @property
+    def is_open(self):
+        return self.status in (self.STATUS_OPEN, self.STATUS_LOOKING)
+
+
+# seen: the voter saw the outcome (fulfilled or declined) of the request; drives the navbar bell.
+class BookRequestVote(Base):
+    __tablename__ = 'book_request_vote'
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey('book_request.id'), index=True)
+    user_id = Column(Integer, ForeignKey('user.id'), index=True)
+    seen = Column(Boolean, default=False, nullable=False)
+    created = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    user = relationship("User")
+
+
 # This table keeps track of deleted Shelves so that deletes can be propagated to any paired Kobo device.
 class ShelfArchive(Base):
     __tablename__ = 'shelf_archive'
@@ -705,6 +747,21 @@ def delete_user_comments(book_id=None, shelf_ids=None, user_id=None):
     if user_id is not None:
         for comment in session.query(UserComment).filter(UserComment.user_id == user_id).all():
             delete_user_comment(comment)
+
+
+# Book requests: a deleted book unlinks its fulfilled requests; a deleted user loses its votes, and a
+# request that nobody wants any more goes. No commit.
+def unlink_book_requests(book_id):
+    session.query(BookRequest).filter(BookRequest.book_id == book_id).update({"book_id": None})
+
+
+def delete_book_request_votes(user_id):
+    request_ids = [v.request_id for v in session.query(BookRequestVote).filter(BookRequestVote.user_id == user_id)]
+    session.query(BookRequestVote).filter(BookRequestVote.user_id == user_id).delete()
+    session.query(BookRequest).filter(BookRequest.done_by == user_id).update({"done_by": None})
+    for book_request in session.query(BookRequest).filter(BookRequest.id.in_(request_ids)):
+        if not session.query(BookRequestVote).filter(BookRequestVote.request_id == book_request.id).count():
+            session.delete(book_request)
 
 
 # Generate user Guest (translated text), as anonymous user, no rights

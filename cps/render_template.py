@@ -127,7 +127,10 @@ def get_sidebar_config(kwargs=None):
 
 # Returns the template for rendering and includes the instance name
 def render_title_template(*args, **kwargs):
+    from .book_requests import navbar_context  # book_requests imports this module
     sidebar, simple = get_sidebar_config(kwargs)
+    for key, value in navbar_context().items():
+        kwargs.setdefault(key, value)
     try:
         return themed_render(args[0],
                              instance=config.config_calibre_web_title,

@@ -18,9 +18,11 @@
 # Book requests: users ask for books that are not in the library (app.db tables book_request and
 # book_request_vote). Every logged-in user can request and vote; an admin sets the status.
 
+import csv
+import io
 from datetime import datetime, timezone
 
-from flask import Blueprint, flash, redirect, request, url_for, abort, jsonify
+from flask import Blueprint, flash, redirect, request, url_for, abort, jsonify, make_response
 from flask_babel import gettext as _
 from sqlalchemy import func
 
@@ -224,3 +226,42 @@ def set_status(request_id):
         v.seen = v.user_id == current_user.id
     ub.session_commit("Admin {} set book request {} to {}".format(current_user.id, request_id, book_request.status))
     return _back(book_request)
+
+
+def _csv_cell(value):
+    """Text for a CSV cell; a leading = + - @ is escaped so a spreadsheet does not run it as a formula."""
+    text = '' if value is None else str(value)
+    return "'" + text if text[:1] in ('=', '+', '-', '@', '\t', '\r') else text
+
+
+@book_requests.route("/requests/export.csv")
+@user_login_required
+def export_csv():
+    """All requests (or one tab with ?tab=open|fulfilled|declined) as a CSV download, times in UTC. Admin only."""
+    if not current_user.role_admin():
+        abort(403)
+    query = ub.session.query(BookRequest)
+    tab = request.args.get('tab')
+    if tab in ('open', 'fulfilled', 'declined'):
+        query = _tab_filter(query, tab)
+    rows = query.order_by(BookRequest.created).all()
+    book_ids = {r.book_id for r in rows if r.book_id}
+    titles = dict(calibre_db.session.query(db.Books.id, db.Books.title).filter(db.Books.id.in_(book_ids)).all()) \
+        if book_ids else {}
+    names = lambda votes: [v.user.name if v.user else '' for v in votes]
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(['id', 'title', 'author', 'note', 'status', 'votes', 'wanted_by', 'requested_by', 'requested_at',
+                     'book_id', 'book_title', 'reason', 'done_by', 'done_at'])
+    for r in rows:
+        voters = names(r.votes)
+        writer.writerow([_csv_cell(c) for c in (
+            r.id, r.title, r.author, r.note, r.status, len(voters), '; '.join(voters), voters[0] if voters else '',
+            r.created.isoformat(timespec='seconds') + 'Z' if r.created else '', r.book_id or '', titles.get(r.book_id, ''),
+            r.reason, r.done_by_user.name if r.done_by_user else '',
+            r.done_at.isoformat(timespec='seconds') + 'Z' if r.done_at else '')])
+    response = make_response(out.getvalue())
+    response.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    response.headers['Content-Disposition'] = 'attachment; filename=book-requests-{}{}.csv'.format(
+        datetime.now().strftime('%Y-%m-%d'), '-' + tab if tab in ('open', 'fulfilled', 'declined') else '')
+    return response

@@ -2,7 +2,9 @@
 {% macro requester(r) %}{{ r.votes[0].user.name if r.votes and r.votes[0].user else _('Deleted user') }}{% endmacro %}
 {% block body %}
 <div class="book-requests">
-  <h2>{{ _('Book requests') }}</h2>
+  <h2>{{ _('Book requests') }}
+    {% if current_user.role_admin() %}<a class="btn btn-default btn-sm pull-right" href="{{ url_for('book_requests.export_csv') }}" title="{{ _('All requests, with votes and outcomes') }}"><span class="glyphicon glyphicon-download-alt"></span> {{ _('Download CSV') }}</a>{% endif %}
+  </h2>
 
   {% if news %}
   <div class="alert alert-info">

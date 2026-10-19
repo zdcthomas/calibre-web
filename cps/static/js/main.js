@@ -150,13 +150,7 @@ $("#btn-upload-format").change(function() {
 });
 
 
-$("#form-upload").uploadprogress({
-    redirect_url: getPath() + "/",
-    uploadedMsg: $("#form-upload").data("message"),
-    modalTitle: $("#form-upload").data("title"),
-    modalFooter: $("#form-upload").data("footer"),
-    modalTitleFailed: $("#form-upload").data("failed")
-});
+// #form-upload is handled by bulk_upload.js (one request per file)
 
 $("#form-upload-format").uploadprogress({
     redirect_url: getPath() + "/",

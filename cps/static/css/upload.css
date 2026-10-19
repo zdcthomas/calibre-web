@@ -6,3 +6,6 @@
     transform: translate(-50%, -50%) !important;
   }
 }
+
+#bulk-upload-rows td { vertical-align: middle; word-break: break-all; }
+#bulk-upload-rows .progress { margin: 0; }

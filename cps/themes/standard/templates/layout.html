@@ -54,7 +54,7 @@
             {% if current_user.is_authenticated or g.allow_anonymous %}
               {% if current_user.role_upload() and g.allow_upload %}
                   <li>
-                    <form id="form-upload" class="navbar-form" action="{{ url_for('edit-book.upload') }}" data-title="{{_('Uploading...')}}" data-footer="{{_('Close')}}" data-failed="{{_('Error')}}" data-message="{{_('Upload done, processing, please wait...')}}" method="post" enctype="multipart/form-data">
+                    <form id="form-upload" class="navbar-form" action="{{ url_for('edit-book.upload') }}" data-title="{{_('Uploading...')}}" data-footer="{{_('Close')}}" data-failed="{{_('Error')}}" data-message="{{_('Upload done, processing, please wait...')}}" data-duplicate="{{_('Already in the library:')}}" data-anyway="{{_('Upload anyway')}}" data-summary="{{_('{done} of {total} files done, {failed} failed or skipped')}}" data-network="{{_('Network error, the file may be too big')}}" method="post" enctype="multipart/form-data">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <div class="form-group">
                         <span class="btn btn-default btn-file">{{_('Upload')}}<input id="btn-upload" name="btn-upload"
@@ -199,6 +199,7 @@
     <script src="{{ url_for('static', filename='js/libs/plugins.js') }}"></script>
     <script src="{{ url_for('static', filename='js/libs/jquery.form.min.js') }}"></script>
     <script src="{{ url_for('static', filename='js/uploadprogress.js') }}"> </script>
+    <script src="{{ url_for('static', filename='js/bulk_upload.js') }}"></script>
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     {% if current_user.role_edit() %}<script src="{{ url_for('static', filename='js/bulk_edit.js') }}"></script>{% endif %}
     {% block js %}{% endblock %}

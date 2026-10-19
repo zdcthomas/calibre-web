@@ -28,7 +28,8 @@ from shutil import copyfile
 from markupsafe import escape, Markup  # dependency of flask
 from functools import wraps
 
-from flask import Blueprint, request, flash, redirect, url_for, abort, jsonify, make_response, Response
+from flask import Blueprint, request, flash, redirect, url_for, abort, jsonify, make_response, Response, \
+    get_flashed_messages
 from flask_babel import gettext as _
 from flask_babel import lazy_gettext as N_
 from flask_babel import get_locale
@@ -110,6 +111,8 @@ def upload():
         book_id = request.form.get('book_id', -1)
         return do_edit_book(book_id, request.files.getlist("btn-upload-format"))
     elif len(request.files.getlist("btn-upload")):
+        # batch mode: one file per request, always answer with JSON, never redirect
+        batch = request.form.get("batch") == "1"
         for requested_file in request.files.getlist("btn-upload"):
             try:
                 modify_date = False
@@ -117,7 +120,16 @@ def upload():
                 calibre_db.create_functions(config)
                 meta, error = file_handling_on_upload(requested_file)
                 if error:
+                    if batch:
+                        return jsonify(success=False, messages=get_flashed_messages())
                     return error
+
+                if batch and request.form.get("allow_duplicate") != "1":
+                    existing = calibre_db.check_exists_book(meta.author, meta.title)
+                    if existing:
+                        return jsonify(success=False, duplicate=True, book_id=existing.id, title=existing.title,
+                                       location=url_for('web.show_book', book_id=existing.id),
+                                       messages=get_flashed_messages())
 
                 db_book, input_authors, title_dir = create_book_on_upload(modify_date, meta)
 
@@ -157,6 +169,13 @@ def upload():
                 WorkerThread.add(current_user.name, TaskUpload(upload_text, escape(title)))
                 helper.add_book_to_thumbnail_cache(book_id)
 
+                if batch:
+                    if current_user.role_edit() or current_user.role_admin():
+                        location = url_for('edit-book.show_edit_book', book_id=book_id)
+                    else:
+                        location = url_for('web.show_book', book_id=book_id)
+                    return jsonify(success=True, book_id=book_id, title=title, location=location,
+                                   messages=get_flashed_messages())
                 if len(request.files.getlist("btn-upload")) < 2:
                     if current_user.role_edit() or current_user.role_admin():
                         resp = {"location": url_for('edit-book.show_edit_book', book_id=book_id)}
@@ -169,6 +188,8 @@ def upload():
                 log.error_or_exception("Database error: {}".format(e))
                 flash(_("Oops! Database Error: %(error)s.", error=e.orig if hasattr(e, "orig") else e),
                       category="error")
+                if batch:
+                    return jsonify(success=False, messages=get_flashed_messages())
         return make_response(jsonify(location=url_for("web.index")))
     abort(404)
 

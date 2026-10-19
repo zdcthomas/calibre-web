@@ -511,3 +511,33 @@ body > div.container-fluid  {
 .input-group .toggle-password {
   height: 40px;
 }
+
+/* bulk edit: cover checkbox + side panel */
+.bulk-check {
+  position: absolute; top: 6px; left: 6px; z-index: 2;
+  width: 22px; height: 22px; line-height: 20px; text-align: center;
+  border: 1px solid #888; border-radius: 3px; background: rgba(255,255,255,.9);
+  color: #fff; cursor: pointer; display: none;
+}
+.book:hover .bulk-check, .book.bulk-selected .bulk-check { display: block; }
+.book.bulk-selected .bulk-check { background: #337ab7; border-color: #286090; }
+.book.bulk-selected .bulk-check:before { content: "\2713"; }
+.book.bulk-selected .cover { outline: 3px solid #337ab7; outline-offset: 2px; }
+#bulk-panel {
+  position: fixed; top: 51px; right: 0; bottom: 0; width: 300px; z-index: 1000;
+  overflow-y: auto; padding: 15px; background: #fafafa; border-left: 1px solid #ddd;
+}
+body.bulk-open > .container-fluid { margin-right: 300px; }
+.bulk-shelf {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px; margin-bottom: 4px; cursor: pointer;
+  border: 1px solid #ddd; border-radius: 3px; background: #fff;
+}
+.bulk-shelf[data-state="all"] { background: #dff0d8; border-color: #3c763d; }
+.bulk-shelf[data-state="some"] { background: #fcf8e3; border-color: #8a6d3b; }
+.bulk-field { margin-bottom: 6px; }
+#scnd-nav li.bulk-droptarget > a { background: #dff0d8; outline: 2px dashed #3c763d; }
+@media (max-width: 767px) {
+  #bulk-panel { top: auto; height: 50vh; width: 100%; border-left: 0; border-top: 1px solid #ddd; }
+  body.bulk-open > .container-fluid { margin-right: 0; padding-bottom: 50vh; }
+}

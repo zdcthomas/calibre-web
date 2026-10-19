@@ -57,6 +57,7 @@
     {% for entry in entries %}
     <div class="col-sm-3 col-lg-2 col-xs-6 book session">
       <div class="cover">
+          {% if current_user.role_edit() %}<span class="bulk-check" data-book-id="{{ entry.Books.id }}" title="{{_('Select')}}"></span>{% endif %}
         {% if entry.Books.has_cover is defined %}
            <a href="{{ url_for('web.show_book', book_id=entry.Books.id) }}" {% if simple==false %}data-toggle="modal" data-target="#bookDetailsModal" data-remote="false"{% endif %}>
             <span class="img" title="{{entry.Books.title}}" >

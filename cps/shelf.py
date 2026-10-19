@@ -23,7 +23,7 @@
 import sys
 from datetime import datetime, timezone
 
-from flask import Blueprint, flash, redirect, request, url_for, abort
+from flask import Blueprint, flash, redirect, request, url_for, abort, jsonify
 from flask_babel import gettext as _
 from .cw_login import current_user
 from sqlalchemy.exc import InvalidRequestError, OperationalError
@@ -100,6 +100,49 @@ def add_to_shelf(shelf_id, book_id):
         else:
             return redirect(url_for('web.index'))
     return "", 204
+
+
+@shelf.route("/ajax/shelf/membership", methods=["POST"])
+@user_login_required
+def shelf_membership():
+    # how many of the selected books sit on each shelf: {shelf_id: count}
+    book_ids = (request.get_json() or {}).get("selections") or []
+    rows = ub.session.query(ub.BookShelf.shelf, func.count(ub.BookShelf.book_id)) \
+        .filter(ub.BookShelf.book_id.in_(book_ids)).group_by(ub.BookShelf.shelf).all()
+    return jsonify({str(shelf_id): count for shelf_id, count in rows})
+
+
+@shelf.route("/ajax/shelf/<action>/<int:shelf_id>", methods=["POST"])
+@user_login_required
+def bulk_shelf(action, shelf_id):
+    cur_shelf = ub.session.query(ub.Shelf).filter(ub.Shelf.id == shelf_id).first()
+    if cur_shelf is None or action not in ("add", "remove"):
+        return jsonify(success=False, msg=_("Invalid shelf specified")), 400
+    if not check_shelf_edit_permissions(cur_shelf):
+        return jsonify(success=False, msg=_("Sorry you are not allowed to edit this shelf")), 403
+    wanted = (request.get_json() or {}).get("selections") or []
+    book_ids = [row.id for row in calibre_db.session.query(db.Books.id).filter(db.Books.id.in_(wanted))]
+    if action == "add":
+        on_shelf = {row.book_id for row in ub.session.query(ub.BookShelf.book_id).filter(ub.BookShelf.shelf == shelf_id)}
+        order = ub.session.query(func.max(ub.BookShelf.order)).filter(ub.BookShelf.shelf == shelf_id).scalar() or 0
+        for book_id in book_ids:
+            if book_id not in on_shelf:
+                order += 1
+                cur_shelf.books.append(ub.BookShelf(shelf=cur_shelf.id, book_id=book_id, order=order))
+        msg = _("Books have been added to shelf: %(sname)s", sname=cur_shelf.name)
+    else:
+        ub.session.query(ub.BookShelf).filter(ub.BookShelf.shelf == shelf_id,
+                                              ub.BookShelf.book_id.in_(book_ids)).delete(synchronize_session=False)
+        msg = _("Books have been removed from shelf: %(sname)s", sname=cur_shelf.name)
+    cur_shelf.last_modified = datetime.now(timezone.utc)
+    try:
+        ub.session.merge(cur_shelf)
+        ub.session.commit()
+    except (OperationalError, InvalidRequestError) as e:
+        ub.session.rollback()
+        log.error_or_exception("Settings Database error: {}".format(e))
+        return jsonify(success=False, msg=_("Oops! Database Error: %(error)s.", error=e.orig)), 500
+    return jsonify(success=True, msg=msg)
 
 
 @shelf.route("/shelf/massremove/<int:shelf_id>", methods=["POST"])

@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book and Shelf Comments</title>
+<!--
+  PROTOTYPE. Throwaway. Not production code.
+  Question: what should user comments on books and on shelves look like in Calibre-Web?
+  Three variants on a mock of the book detail page and the shelf page, switchable via
+  ?variant=A|B|C (or #A|#B|#C) and the yellow bar at the top.
+    A  Thread under the details: one-level replies, shelf comments can be "about" a book.
+    B  Side drawer: flat comments behind a count button; shelf drawer has a "books on shelf" tab.
+    C  Activity feed: comments and shelf events (add/remove book) in one timeline.
+  These are user discussion threads (author, time, text). They are NOT Calibre's "comments"
+  column, which is the book description. Real storage would be a new table in app.db (cps/ub.py).
+  All state is in memory. Reload resets it.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/css/bootstrap.min.css">
+<style>
+  /* Layout: Calibre-Web standard theme chrome (navbar + left sidebar), variant content in #main. */
+  :root { --bg: #fff; --fg: #333; --muted: #777; --line: #e5e5e5; --soft: #f7f7f7; --accent: #337ab7; --mine: #eef5fb; }
+  body { padding-top: 70px; padding-bottom: 60px; background: var(--bg); color: var(--fg); }
+  .navbar-brand { font-weight: bold; }
+  #sidebar { position: fixed; top: 51px; bottom: 0; left: 0; width: 200px; overflow-y: auto; background: #f8f8f8; border-right: 1px solid #e7e7e7; padding: 10px 0; }
+  #sidebar .nav > li > a { padding: 6px 15px; color: #333; }
+  #sidebar .nav > li.active > a { background: #e7e7e7; }
+  #sidebar .nav-header { padding: 10px 15px 4px; font-size: 11px; color: #777; text-transform: uppercase; letter-spacing: .04em; }
+  #main { margin-left: 200px; padding: 0 20px; }
+  @media (max-width: 767px) { #sidebar { position: static; width: auto; border-right: 0; } #main { margin-left: 0; padding: 0 16px; } body { padding-top: 110px; } }
+
+  .cover { border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.3); display: flex; align-items: flex-end; padding: 8px; color: #fff; font-weight: bold; text-shadow: 0 1px 2px #000; font-size: 13px; line-height: 1.2; }
+  .cover.big { height: 300px; font-size: 18px; padding: 14px; max-width: 220px; }
+  .cover.mid { height: 200px; cursor: pointer; }
+  .cover.tiny { width: 28px; height: 40px; padding: 0; flex: none; font-size: 0; }
+  .book { margin-bottom: 20px; position: relative; }
+  .book .meta { margin-top: 6px; font-size: 12px; }
+  .book .meta .title { font-weight: bold; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book .meta .author { color: var(--muted); }
+  .book .rm { position: absolute; top: 4px; right: 19px; display: none; }
+  .book:hover .rm { display: block; }
+  .detail h2 { margin-top: 0; }
+  .detail .tags .label { margin-right: 3px; font-weight: normal; }
+  .detail .desc-h { font-size: 13px; text-transform: uppercase; color: var(--muted); letter-spacing: .04em; margin-top: 20px; }
+  .stars { color: #f0ad4e; letter-spacing: 2px; }
+  .note { font-size: 12px; color: var(--muted); }
+
+  /* Comments, shared bits */
+  .cmt { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .cmt:first-child { border-top: 0; }
+  .cmt.mine .cbody { background: var(--mine); }
+  .av { flex: none; width: 32px; height: 32px; border-radius: 50%; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+  .cbody { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 4px; }
+  .chead { font-size: 12px; color: var(--muted); }
+  .chead b { color: var(--fg); font-size: 13px; }
+  .ctext { white-space: pre-wrap; word-wrap: break-word; margin: 3px 0; }
+  .ctext.gone { font-style: italic; color: var(--muted); }
+  .ctext blockquote { font-size: 12px; margin: 0 0 4px; padding: 2px 8px; color: var(--muted); }
+  .cacts { font-size: 12px; }
+  .cacts a { margin-right: 10px; cursor: pointer; }
+  .cacts .danger { color: #a94442; }
+  .chip { display: inline-block; background: #eee; border: 1px solid #ddd; border-radius: 10px; padding: 0 7px; font-size: 11px; color: #555; cursor: pointer; }
+  .replies { margin-left: 42px; }
+  .composer textarea { resize: vertical; }
+  .composer .row-flex { display: flex; gap: 8px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
+
+  /* A */
+  .a-section { margin-top: 30px; max-width: 760px; }
+  .a-section h3 small { margin-left: 6px; }
+  .a-mention { background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 8px 12px; margin-bottom: 15px; }
+
+  /* B */
+  #b-drawer { position: fixed; top: 51px; right: 0; bottom: 0; width: 400px; max-width: 100%; background: #fff; border-left: 1px solid #ccc; box-shadow: -4px 0 14px rgba(0,0,0,.15); z-index: 1000; display: flex; flex-direction: column; }
+  #b-drawer[hidden], #state[hidden] { display: none; }
+  #b-drawer .dh { padding: 12px 15px; border-bottom: 1px solid var(--line); background: #f8f8f8; }
+  #b-drawer .dh h4 { margin: 0; }
+  #b-drawer .dl { flex: 1; overflow-y: auto; padding: 0 15px; }
+  #b-drawer .df { border-top: 1px solid var(--line); padding: 10px 15px; background: #fafafa; }
+  #b-drawer .nav-tabs { margin: 10px 0 0; }
+  .b-badge { position: absolute; top: 6px; left: 21px; background: #fff; color: #333; border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,.4); cursor: pointer; text-shadow: none; }
+  .b-group { margin-top: 14px; }
+  .b-group .gh { display: flex; gap: 8px; align-items: center; font-weight: bold; }
+  body.drawer-open #main { margin-right: 400px; }
+
+  /* C */
+  .c-feed { list-style: none; padding: 0; margin: 0; }
+  .c-feed > li { padding: 10px 0; border-top: 1px solid var(--line); }
+  .c-feed > li.ev { font-size: 12px; color: var(--muted); padding: 6px 0 6px 42px; display: flex; gap: 8px; align-items: center; }
+  .c-feed > li.ev .dot { width: 8px; height: 8px; border-radius: 50%; background: #bbb; flex: none; }
+  .c-feed > li.ev.removed .dot { background: #d9534f; }
+  .c-feed > li.ev.added .dot { background: #5cb85c; }
+  .c-feed .cmt { border: 0; padding: 0; }
+  .c-filter .btn { margin-right: 4px; }
+  .c-books { list-style: none; padding: 0; }
+  .c-books li { display: flex; gap: 8px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .c-books li .t { flex: 1; min-width: 0; }
+  .c-rail { background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 12px; }
+
+  /* Prototype chrome */
+  #switcher { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: #ff0; color: #000; border: 2px solid #000; border-radius: 24px; padding: 5px 12px; z-index: 2000; font-family: monospace; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,.4); display: flex; gap: 10px; align-items: center; white-space: nowrap; max-width: calc(100% - 16px); overflow-x: auto; }
+  #switcher button { background: #000; color: #ff0; border: 0; border-radius: 14px; min-width: 28px; height: 26px; font-weight: bold; padding: 0 8px; }
+  #switcher button.on { background: #ff0; color: #000; outline: 2px solid #000; }
+  #switcher select { font-family: monospace; font-weight: bold; border: 1px solid #000; background: #fff; }
+  #state-toggle { position: fixed; top: 60px; right: 10px; z-index: 2001; }
+  #state { position: fixed; top: 95px; right: 10px; width: 380px; max-width: calc(100% - 20px); max-height: 70vh; overflow: auto; background: #222; color: #9f9; font: 11px/1.3 monospace; padding: 8px; z-index: 2001; white-space: pre; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-default navbar-fixed-top">
+  <div class="container-fluid">
+    <div class="navbar-header"><a class="navbar-brand" href="#">Calibre-Web</a></div>
+    <form class="navbar-form navbar-left hidden-xs" onsubmit="return false"><div class="form-group"><input class="form-control" id="search" placeholder="Search" size="30"></div></form>
+    <ul class="nav navbar-nav navbar-right hidden-xs">
+      <li><a href="#">Upload</a></li>
+      <li><a href="#">Admin</a></li>
+      <li><a href="#" id="nav-user">zach</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div id="sidebar">
+  <ul class="nav">
+    <li><a href="#">Books</a></li>
+    <li><a href="#">Recently Added</a></li>
+    <li><a href="#">Hot Books</a></li>
+    <li><a href="#">Authors</a></li>
+    <li><a href="#">Series</a></li>
+  </ul>
+  <div class="nav-header">Shelves</div>
+  <ul class="nav" id="sidebar-shelves"></ul>
+</div>
+
+<div id="main"></div>
+<div id="b-drawer" hidden></div>
+
+<div id="switcher">
+  <button onclick="cycle(-1)" title="Previous variant">&larr;</button>
+  <span id="switcher-label"></span>
+  <button onclick="cycle(1)" title="Next variant">&rarr;</button>
+  <span>|</span>
+  <button id="go-book" onclick="go('book',1)">book page</button>
+  <button id="go-shelf" onclick="go('shelf',1)">shelf page</button>
+  <span>|</span>
+  <label style="margin:0">as <select id="as-user" onchange="me=this.value;render()"><option>zach</option><option>maria</option><option>tom</option></select></label>
+</div>
+<button id="state-toggle" class="btn btn-xs btn-default" onclick="$('#state').prop('hidden',(i,h)=>!h)">state</button>
+<pre id="state" hidden></pre>
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script>
+// ---------- mock data ----------
+const USERS = {
+  zach:  { admin: true,  color: '#337ab7' },
+  maria: { admin: false, color: '#8e44ad' },
+  tom:   { admin: false, color: '#16a085' },
+};
+let me = 'zach';
+const BOOKS = [
+  { id: 1, title: 'The Left Hand of Darkness', author: 'Ursula K. Le Guin', color: '#4a6274', series: 'Hainish Cycle [4]', tags: ['Science Fiction', 'Classics'], pub: 'Ace Books', year: 1969, rating: 5,
+    desc: 'An envoy from a federation of worlds visits Gethen, a frozen planet whose people have no fixed sex. He must win the trust of two rival nations before either one turns on him.' },
+  { id: 2, title: 'The Dispossessed', author: 'Ursula K. Le Guin', color: '#8a5a2b', series: 'Hainish Cycle [1]', tags: ['Science Fiction', 'Politics'], pub: 'Harper & Row', year: 1974, rating: 5,
+    desc: 'A physicist leaves an anarchist moon to work on the rich planet it once broke away from.' },
+  { id: 3, title: 'Piranesi', author: 'Susanna Clarke', color: '#2f6f6a', series: '', tags: ['Fantasy'], pub: 'Bloomsbury', year: 2020, rating: 4,
+    desc: 'A man lives alone in an endless house of statues and tides, and keeps a careful journal.' },
+  { id: 4, title: 'Klara and the Sun', author: 'Kazuo Ishiguro', color: '#c08a2d', series: '', tags: ['Literary Fiction'], pub: 'Faber', year: 2021, rating: 4,
+    desc: 'An artificial friend watches the family that buys her and tries to understand love.' },
+  { id: 5, title: 'A Memory Called Empire', author: 'Arkady Martine', color: '#7a2e3b', series: 'Teixcalaan [1]', tags: ['Science Fiction'], pub: 'Tor', year: 2019, rating: 4,
+    desc: 'A new ambassador arrives at the heart of an empire and learns her predecessor did not die by accident.' },
+  { id: 6, title: 'The Fifth Season', author: 'N. K. Jemisin', color: '#3d3d5c', series: 'Broken Earth [1]', tags: ['Fantasy'], pub: 'Orbit', year: 2015, rating: 5,
+    desc: 'On a continent wrecked by seismic disasters, a woman searches for her stolen daughter.' },
+  { id: 7, title: 'Station Eleven', author: 'Emily St. John Mandel', color: '#55606e', series: '', tags: ['Literary Fiction'], pub: 'Knopf', year: 2014, rating: 4,
+    desc: 'A travelling theatre company performs Shakespeare twenty years after a pandemic.' },
+];
+const SHELVES = {
+  1: { id: 1, name: 'Book club 2026', public: true,  owner: 'maria', books: [1, 2, 3, 4, 5] },
+  2: { id: 2, name: 'To read',        public: false, owner: 'zach',  books: [6, 7] },
+};
+const t = s => new Date('2026-' + s).getTime();
+let comments = [
+  { id: 1, target: 'book:1',  author: 'maria', ts: t('10-12T19:05'), text: 'Finished it on the train. The crossing of the ice is the best part of the book.' },
+  { id: 2, target: 'book:1',  author: 'tom',   ts: t('10-13T08:40'), parent: 1, text: 'Agreed. I almost quit in the first 50 pages though. Too many names.' },
+  { id: 3, target: 'book:1',  author: 'zach',  ts: t('10-14T21:10'), text: 'Question for Thursday: is Genly a reliable narrator? I say no.' },
+  { id: 4, target: 'shelf:1', author: 'maria', ts: t('10-10T12:00'), text: 'Next meeting: Thursday 23 Oct, 19:30 at my place. We discuss Left Hand of Darkness.', about: 1 },
+  { id: 5, target: 'shelf:1', author: 'tom',   ts: t('10-11T09:15'), text: 'Can we move Piranesi to November? The library has a long wait list.', about: 3 },
+  { id: 6, target: 'shelf:1', author: 'zach',  ts: t('10-11T10:02'), parent: 5, text: 'Fine with me. I have the epub and can lend it.' },
+  { id: 7, target: 'book:3',  author: 'maria', ts: t('10-02T22:30'), text: 'Read it in two evenings. Do not read the reviews first.' },
+  { id: 8, target: 'book:2',  author: 'tom',   ts: t('09-28T18:00'), text: 'Anarres or Urras: I keep changing my mind about which one is the utopia.' },
+  { id: 9, target: 'shelf:2', author: 'zach',  ts: t('10-01T09:00'), text: 'Note to self: get Fifth Season from the library before December.' },
+];
+let events = [
+  { shelf: 1, type: 'added',   book: 1, author: 'maria', ts: t('09-20T10:00') },
+  { shelf: 1, type: 'added',   book: 2, author: 'maria', ts: t('09-20T10:01') },
+  { shelf: 1, type: 'added',   book: 3, author: 'tom',   ts: t('09-25T17:40') },
+  { shelf: 1, type: 'added',   book: 7, author: 'tom',   ts: t('09-26T11:00') },
+  { shelf: 1, type: 'removed', book: 7, author: 'maria', ts: t('09-27T08:12') },
+  { shelf: 1, type: 'added',   book: 4, author: 'maria', ts: t('10-01T20:00') },
+  { shelf: 1, type: 'added',   book: 5, author: 'zach',  ts: t('10-08T13:30') },
+];
+let nextId = 100;
+let clock = t('10-19T20:00');
+
+const VARIANTS = {
+  A: 'Thread under details',
+  B: 'Side drawer',
+  C: 'Activity feed',
+};
+const fromUrl = (location.hash.slice(1) || new URLSearchParams(location.search).get('variant') || 'A').toUpperCase();
+let variant = VARIANTS[fromUrl] ? fromUrl : 'A';
+let view = { page: 'book', id: 1 };
+let ui = { editing: null, confirmDel: null, replyTo: null, drawer: null, drawerTab: 'shelf', cFilter: 'all' };
+let lastAction = '(none)';
+
+// ---------- helpers ----------
+const book = id => BOOKS.find(b => b.id === id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = ts => new Date(ts).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+const canEdit = c => c.author === me && !c.deleted;
+const canDelete = c => !c.deleted && (c.author === me || USERS[me].admin);
+const of = target => comments.filter(c => c.target === target);
+const count = target => of(target).filter(c => !c.deleted).length;
+const shelvesOf = bookId => Object.values(SHELVES).filter(s => s.books.includes(bookId));
+const visibleShelf = s => s.public || s.owner === me;
+function richText(c) {
+  if (c.deleted) return '<div class="ctext gone">This comment was deleted.</div>';
+  const lines = esc(c.text).split('\n');
+  const quote = lines.filter(l => l.startsWith('&gt; ')).map(l => l.slice(5)).join('<br>');
+  const rest = lines.filter(l => !l.startsWith('&gt; ')).join('\n');
+  return '<div class="ctext">' + (quote ? '<blockquote>' + quote + '</blockquote>' : '') + rest + '</div>';
+}
+function cover(b, size) {
+  return `<div class="cover ${size}" style="background:${b.color}" data-act="open-book" data-id="${b.id}">${size === 'tiny' ? '' : esc(b.title)}</div>`;
+}
+
+// One comment. opts: reply (show Reply), quote (show Quote), context (html after time)
+function commentHtml(c, opts = {}) {
+  const u = USERS[c.author];
+  let body;
+  if (ui.editing === c.id) {
+    body = `<textarea class="form-control input-sm" id="edit-${c.id}" rows="3">${esc(c.text)}</textarea>
+      <div class="cacts" style="margin-top:4px"><a data-act="save" data-id="${c.id}">Save</a><a data-act="cancel">Cancel</a></div>`;
+  } else {
+    let acts = [];
+    if (ui.confirmDel === c.id) {
+      acts = [`<span>Delete this comment?</span>`, `<a class="danger" data-act="del-yes" data-id="${c.id}">Delete</a>`, `<a data-act="cancel">Keep</a>`];
+    } else if (!c.deleted) {
+      if (opts.reply) acts.push(`<a data-act="reply" data-id="${c.id}">Reply</a>`);
+      if (opts.quote) acts.push(`<a data-act="quote" data-id="${c.id}">Quote</a>`);
+      if (canEdit(c)) acts.push(`<a data-act="edit" data-id="${c.id}">Edit</a>`);
+      if (canDelete(c)) acts.push(`<a class="danger" data-act="del" data-id="${c.id}">${c.author === me ? 'Delete' : 'Remove (admin)'}</a>`);
+    }
+    body = richText(c) + `<div class="cacts">${acts.join(' ')}</div>`;
+  }
+  return `<div class="cmt${c.author === me ? ' mine' : ''}" data-cid="${c.id}">
+    <div class="av" style="background:${c.deleted ? '#bbb' : u.color}">${c.deleted ? '?' : c.author[0].toUpperCase()}</div>
+    <div class="cbody">
+      <div class="chead"><b>${c.deleted ? 'deleted' : c.author}</b> · ${fmt(c.ts)}${c.edited && !c.deleted ? ' · edited' : ''}${opts.context || ''}</div>
+      ${body}
+    </div></div>`;
+}
+function aboutChip(c) {
+  return c.about && book(c.about) ? ` · about <span class="chip" data-act="open-book" data-id="${c.about}">${esc(book(c.about).title)}</span>` : '';
+}
+function privateNote(target) {
+  if (!target.startsWith('shelf:')) return '';
+  const s = SHELVES[target.split(':')[1]];
+  return s.public ? `<span class="note">Public shelf: every user who can see this shelf sees these comments.</span>`
+                  : `<span class="note">Private shelf: only you see these comments.</span>`;
+}
+function composer(target, opts = {}) {
+  const aboutSel = opts.about ? `<select class="form-control input-sm" id="about-sel" style="width:auto"><option value="">About the whole shelf</option>${
+    SHELVES[target.split(':')[1]].books.map(id => `<option value="${id}">About: ${esc(book(id).title)}</option>`).join('')}</select>` : '';
+  return `<div class="composer">
+    <textarea class="form-control" id="compose" rows="${opts.rows || 3}" placeholder="${opts.placeholder || 'Write a comment'}"></textarea>
+    <div class="row-flex">${aboutSel}<button class="btn btn-primary btn-sm" data-act="post" data-target="${target}">Post comment</button>${privateNote(target)}</div></div>`;
+}
+
+// ---------- shared page parts ----------
+function bookDetail(b, extraButtons = '') {
+  const sh = shelvesOf(b.id).filter(visibleShelf);
+  return `<div class="row detail">
+    <div class="col-sm-4 col-md-3">${cover(b, 'big')}</div>
+    <div class="col-sm-8 col-md-9">
+      <h2>${esc(b.title)}</h2>
+      <p class="author"><a href="#">${esc(b.author)}</a></p>
+      <p class="stars">${'★'.repeat(b.rating)}${'☆'.repeat(5 - b.rating)}</p>
+      ${b.series ? `<p>Book ${esc(b.series.match(/\[(\d+)\]/)[1])} of <a href="#">${esc(b.series.replace(/ \[\d+\]/, ''))}</a></p>` : ''}
+      <p class="tags">${b.tags.map(x => `<span class="label label-info">${esc(x)}</span>`).join('')}</p>
+      <p>Publisher: ${esc(b.pub)} · Published: ${b.year}</p>
+      <p>Shelves: ${sh.length ? sh.map(s => `<a href="#" data-act="open-shelf" data-id="${s.id}">${esc(s.name)}</a>`).join(', ') : '<span class="note">none</span>'}</p>
+      <div class="btn-toolbar" style="margin:12px 0">
+        <button class="btn btn-default">Download</button><button class="btn btn-default">Read in Browser</button><button class="btn btn-default">Add to shelf</button>${extraButtons}
+      </div>
+      <div class="desc-h">Description</div>
+      <p class="note" style="margin:0 0 4px">(Calibre's own "comments" field. It is not part of this feature.)</p>
+      <p style="max-width:65ch">${esc(b.desc)}</p>
+    </div></div>`;
+}
+function shelfGrid(s, badge) {
+  const addable = BOOKS.filter(b => !s.books.includes(b.id));
+  return `<div class="row">${s.books.map(id => {
+      const b = book(id);
+      return `<div class="col-xs-6 col-sm-4 col-md-3 col-lg-2 book">${cover(b, 'mid')}${badge ? badge(b) : ''}
+        <button class="btn btn-xs btn-default rm" data-act="remove-book" data-id="${b.id}" title="Remove from shelf">&times;</button>
+        <div class="meta"><span class="title">${esc(b.title)}</span><span class="author">${esc(b.author)}</span></div></div>`;
+    }).join('')}</div>
+    ${addable.length ? `<div class="form-inline" style="margin-bottom:10px"><select class="form-control input-sm" id="add-sel">${addable.map(b => `<option value="${b.id}">${esc(b.title)}</option>`).join('')}</select>
+      <button class="btn btn-sm btn-default" data-act="add-book">Add to shelf</button> <span class="note">Hover a cover and click &times; to remove it. Both create shelf events (shown in C).</span></div>` : ''}`;
+}
+function shelfHead(s, extra = '') {
+  return `<h2 style="margin-top:0">${esc(s.name)} <small>${s.public ? 'public shelf' : 'private shelf'} · owner ${s.owner}</small></h2>
+    <div class="btn-toolbar" style="margin-bottom:15px"><button class="btn btn-default btn-sm">Edit shelf</button><button class="btn btn-default btn-sm">Change order</button>${extra}</div>`;
+}
+
+// ---------- Variant A: thread under the details ----------
+const A = {
+  thread(target, allowAbout) {
+    const all = of(target);
+    const roots = all.filter(c => !c.parent).sort((x, y) => x.ts - y.ts);
+    const html = roots.map(r => {
+      const kids = all.filter(c => c.parent === r.id).sort((x, y) => x.ts - y.ts);
+      if (r.deleted && !kids.length) return '';
+      return commentHtml(r, { reply: true, context: aboutChip(r) }) +
+        `<div class="replies">${kids.map(k => commentHtml(k)).join('')}${ui.replyTo === r.id ? `<div class="composer" style="padding:8px 0">
+          <textarea class="form-control input-sm" id="reply-box" rows="2" placeholder="Reply to ${r.author}"></textarea>
+          <div class="row-flex"><button class="btn btn-primary btn-xs" data-act="post-reply" data-id="${r.id}">Reply</button><a data-act="cancel" style="cursor:pointer">Cancel</a></div></div>` : ''}</div>`;
+    }).join('');
+    return `<div class="a-section"><h3>Discussion <small>${count(target)} comments</small></h3>
+      <div>${html || '<p class="note">No comments yet. Start the discussion.</p>'}</div>
+      <div style="margin-top:12px">${composer(target, { about: allowAbout })}</div></div>`;
+  },
+  book(b) {
+    const mentions = comments.filter(c => c.about === b.id && !c.deleted && visibleShelf(SHELVES[c.target.split(':')[1]]));
+    const mentionHtml = mentions.length ? `<div class="a-mention"><b>Mentioned in shelf discussions</b>${mentions.map(c =>
+      `<div style="margin-top:4px">${c.author} in <a href="#" data-act="open-shelf" data-id="${c.target.split(':')[1]}">${esc(SHELVES[c.target.split(':')[1]].name)}</a>: <span class="note">${esc(c.text.slice(0, 90))}${c.text.length > 90 ? '…' : ''}</span></div>`).join('')}</div>` : '';
+    return bookDetail(b) + `<div class="a-section" style="margin-bottom:-20px">${mentionHtml}</div>` + A.thread('book:' + b.id);
+  },
+  shelf(s) {
+    return shelfHead(s) + shelfGrid(s) + A.thread('shelf:' + s.id, true);
+  },
+};
+
+// ---------- Variant B: side drawer ----------
+const B = {
+  book(b) {
+    return bookDetail(b, `<button class="btn btn-primary" data-act="drawer" data-target="book:${b.id}">Comments (${count('book:' + b.id)})</button>`);
+  },
+  shelf(s) {
+    const bookTotal = s.books.reduce((n, id) => n + count('book:' + id), 0);
+    return shelfHead(s, `<button class="btn btn-primary btn-sm" data-act="drawer" data-target="shelf:${s.id}">Comments (${count('shelf:' + s.id)} on shelf, ${bookTotal} on its books)</button>`) +
+      shelfGrid(s, b => count('book:' + b.id) ? `<span class="b-badge" data-act="drawer" data-target="book:${b.id}" title="Comments on this book">${count('book:' + b.id)} &#x1F5E8;</span>` : '');
+  },
+  flat(target) {
+    const list = of(target).filter(c => !c.deleted).sort((x, y) => x.ts - y.ts);
+    return list.map(c => {
+      const parent = c.parent && comments.find(p => p.id === c.parent);
+      return commentHtml(c, { quote: true, context: aboutChip(c) + (parent ? ` · in reply to ${parent.author}` : '') });
+    }).join('') || '<p class="note" style="padding:12px 0">No comments yet.</p>';
+  },
+  drawer() {
+    const d = ui.drawer;
+    if (!d) return '';
+    const [type, id] = d.split(':');
+    let title, list, footer, tabs = '', back = '';
+    if (type === 'book') {
+      const b = book(+id);
+      title = esc(b.title);
+      list = B.flat(d);
+      footer = composer(d, { rows: 2 });
+      if (view.page === 'shelf') back = `<a data-act="drawer" data-target="shelf:${view.id}" style="cursor:pointer;font-size:12px">&larr; back to shelf comments</a><br>`;
+    } else {
+      const s = SHELVES[id];
+      title = esc(s.name);
+      const bookTotal = s.books.reduce((n, bid) => n + count('book:' + bid), 0);
+      tabs = `<ul class="nav nav-tabs"><li class="${ui.drawerTab === 'shelf' ? 'active' : ''}"><a data-act="tab" data-tab="shelf" style="cursor:pointer">This shelf (${count(d)})</a></li>
+        <li class="${ui.drawerTab === 'books' ? 'active' : ''}"><a data-act="tab" data-tab="books" style="cursor:pointer">Books on shelf (${bookTotal})</a></li></ul>`;
+      if (ui.drawerTab === 'shelf') {
+        list = B.flat(d);
+        footer = composer(d, { rows: 2, about: true });
+      } else {
+        list = s.books.map(bid => {
+          const b = book(bid);
+          const cs = of('book:' + bid).filter(c => !c.deleted).sort((x, y) => y.ts - x.ts);
+          return `<div class="b-group"><div class="gh">${cover(b, 'tiny')}<span style="flex:1">${esc(b.title)}</span>
+            <a class="btn btn-xs btn-default" data-act="drawer" data-target="book:${bid}">${cs.length ? 'Open thread' : 'Write first comment'}</a></div>
+            ${cs.slice(0, 2).map(c => commentHtml(c)).join('')}${cs.length > 2 ? `<p class="note">${cs.length - 2} older comments in the thread</p>` : ''}</div>`;
+        }).join('');
+        footer = '<span class="note">Open a book thread to write about one book.</span>';
+      }
+    }
+    return `<div class="dh">${back}<button class="close" data-act="drawer-close">&times;</button><h4>Comments · ${title}</h4>${tabs}</div>
+      <div class="dl">${list}</div><div class="df">${footer}</div>`;
+  },
+};
+
+// ---------- Variant C: activity feed ----------
+const C = {
+  item(x, here) {
+    if (x.kind === 'ev') {
+      const b = book(x.book);
+      const where = here === 'shelf' ? 'this shelf' : `<a href="#" data-act="open-shelf" data-id="${x.shelf}">${esc(SHELVES[x.shelf].name)}</a>`;
+      const what = here === 'shelf' ? `<a href="#" data-act="open-book" data-id="${b.id}">${esc(b.title)}</a>` : 'this book';
+      return `<li class="ev ${x.type}"><span class="dot"></span><span><b>${x.author}</b> ${x.type} ${what} ${x.type === 'added' ? 'to' : 'from'} ${where} · ${fmt(x.ts)}</span></li>`;
+    }
+    const c = x.c, [type, id] = c.target.split(':');
+    let ctx = '';
+    if (here === 'shelf' && type === 'book') ctx = ` · on <span class="chip" data-act="open-book" data-id="${id}">${esc(book(+id).title)}</span>`;
+    if (here === 'book' && type === 'shelf') ctx = ` · in <a href="#" data-act="open-shelf" data-id="${id}">${esc(SHELVES[id].name)}</a>`;
+    if (here === 'shelf') ctx += aboutChip(c);
+    const parent = c.parent && comments.find(p => p.id === c.parent);
+    if (parent) ctx += ` · in reply to ${parent.author}`;
+    return `<li>${commentHtml(c, { quote: true, context: ctx })}</li>`;
+  },
+  feed(items, here) {
+    const f = ui.cFilter;
+    const shown = items.filter(x => f === 'all' || (f === 'comments' ? x.kind === 'c' : x.kind === 'ev')).sort((a, b) => b.ts - a.ts);
+    const pill = (k, label) => `<button class="btn btn-xs ${f === k ? 'btn-primary' : 'btn-default'}" data-act="filter" data-f="${k}">${label}</button>`;
+    return `<div class="c-filter" style="margin:10px 0">${pill('all', 'All')}${pill('comments', 'Comments')}${pill('ev', 'Shelf changes')}</div>
+      <ul class="c-feed">${shown.map(x => C.item(x, here)).join('') || '<li class="note">Nothing here yet.</li>'}</ul>`;
+  },
+  shelf(s) {
+    const items = [
+      ...comments.filter(c => !c.deleted && (c.target === 'shelf:' + s.id || s.books.some(id => c.target === 'book:' + id))).map(c => ({ kind: 'c', ts: c.ts, c })),
+      ...events.filter(e => e.shelf === s.id).map(e => ({ kind: 'ev', ts: e.ts, ...e })),
+    ];
+    const addable = BOOKS.filter(b => !s.books.includes(b.id));
+    const postTo = `<select class="form-control input-sm" id="post-to" style="width:auto"><option value="shelf:${s.id}">Post to: this shelf</option>${
+      s.books.map(id => `<option value="book:${id}">Post to: ${esc(book(id).title)}</option>`).join('')}</select>`;
+    return shelfHead(s) + `<div class="row">
+      <div class="col-md-7" style="min-width:0">
+        <div class="composer"><textarea class="form-control" id="compose" rows="2" placeholder="Write to the shelf, or pick a book"></textarea>
+          <div class="row-flex">${postTo}<button class="btn btn-primary btn-sm" data-act="post-c">Post</button>${privateNote('shelf:' + s.id)}</div></div>
+        ${C.feed(items, 'shelf')}
+      </div>
+      <div class="col-md-5"><div class="c-rail"><b>${s.books.length} books on this shelf</b>
+        <ul class="c-books">${s.books.map(id => { const b = book(id), n = count('book:' + id);
+          return `<li>${cover(b, 'tiny')}<span class="t"><a href="#" data-act="open-book" data-id="${id}">${esc(b.title)}</a><br><span class="note">${n} comment${n === 1 ? '' : 's'}</span></span>
+          <button class="btn btn-xs btn-default" data-act="remove-book" data-id="${id}" title="Remove from shelf">&times;</button></li>`; }).join('')}</ul>
+        ${addable.length ? `<div class="form-inline"><select class="form-control input-sm" id="add-sel">${addable.map(b => `<option value="${b.id}">${esc(b.title)}</option>`).join('')}</select>
+          <button class="btn btn-sm btn-default" data-act="add-book">Add</button></div>` : ''}
+      </div></div></div>`;
+  },
+  book(b) {
+    const items = [
+      ...comments.filter(c => !c.deleted && (c.target === 'book:' + b.id || (c.about === b.id && visibleShelf(SHELVES[c.target.split(':')[1]])))).map(c => ({ kind: 'c', ts: c.ts, c })),
+      ...events.filter(e => e.book === b.id && visibleShelf(SHELVES[e.shelf])).map(e => ({ kind: 'ev', ts: e.ts, ...e })),
+    ];
+    return `<div class="row"><div class="col-md-8">${bookDetail(b)}</div>
+      <div class="col-md-4" style="min-width:0"><div class="c-rail"><b>Activity</b>
+        <div class="composer" style="margin-top:8px"><textarea class="form-control input-sm" id="compose" rows="2" placeholder="Comment on this book"></textarea>
+          <div class="row-flex"><button class="btn btn-primary btn-sm" data-act="post" data-target="book:${b.id}">Post</button></div></div>
+        ${C.feed(items, 'book')}</div></div></div>`;
+  },
+};
+
+// ---------- actions ----------
+function post(target, text, extra = {}) {
+  text = text.trim();
+  if (!text) return;
+  clock += 60000;
+  comments.push({ id: nextId++, target, author: me, ts: clock, text, ...extra });
+  lastAction = `${me} posted on ${target}`;
+}
+function del(id) {
+  const c = comments.find(x => x.id === id);
+  if (comments.some(x => x.parent === id && !x.deleted) && variant === 'A') { c.deleted = true; lastAction = `soft-deleted ${id} (it has replies)`; }
+  else { comments = comments.filter(x => x.id !== id); lastAction = `deleted ${id}`; }
+}
+function shelfEvent(type, bookId) {
+  const s = SHELVES[view.id];
+  clock += 60000;
+  if (type === 'added') s.books.push(bookId); else s.books = s.books.filter(x => x !== bookId);
+  events.push({ shelf: s.id, type, book: bookId, author: me, ts: clock });
+  lastAction = `${me} ${type} book ${bookId} on shelf ${s.id}`;
+}
+$(document).on('click', '[data-act]', function (e) {
+  e.preventDefault(); e.stopPropagation();
+  const el = $(this), act = el.data('act'), id = +el.data('id');
+  switch (act) {
+    case 'open-book': return go('book', id);
+    case 'open-shelf': return go('shelf', id);
+    case 'post': post(el.data('target'), $('#compose').val(), $('#about-sel').val() ? { about: +$('#about-sel').val() } : {}); break;
+    case 'post-c': post($('#post-to').val(), $('#compose').val()); break;
+    case 'post-reply': {
+      const parent = comments.find(c => c.id === id);
+      post(parent.target, $('#reply-box').val(), { parent: id }); ui.replyTo = null; break;
+    }
+    case 'reply': ui.replyTo = id; ui.editing = ui.confirmDel = null; render(); $('#reply-box').focus(); return;
+    case 'quote': {
+      const c = comments.find(x => x.id === id);
+      $('#compose').val(`> ${c.author}: ${c.text.split('\n').filter(l => !l.startsWith('> ')).join(' ')}\n`).focus();
+      return;
+    }
+    case 'edit': ui.editing = id; ui.confirmDel = ui.replyTo = null; render(); $('#edit-' + id).focus(); return;
+    case 'save': {
+      const c = comments.find(x => x.id === id), v = $('#edit-' + id).val().trim();
+      if (v && v !== c.text) { c.text = v; c.edited = true; lastAction = `edited ${id}`; }
+      ui.editing = null; break;
+    }
+    case 'cancel': ui.editing = ui.confirmDel = ui.replyTo = null; break;
+    case 'del': ui.confirmDel = id; ui.editing = null; break;
+    case 'del-yes': del(id); ui.confirmDel = null; break;
+    case 'drawer': ui.drawer = el.data('target'); ui.drawerTab = 'shelf'; break;
+    case 'drawer-close': ui.drawer = null; break;
+    case 'tab': ui.drawerTab = el.data('tab'); break;
+    case 'filter': ui.cFilter = el.data('f'); break;
+    case 'remove-book': shelfEvent('removed', id); break;
+    case 'add-book': shelfEvent('added', +$('#add-sel').val()); break;
+  }
+  render();
+});
+function go(page, id) {
+  view = { page, id };
+  ui = { ...ui, editing: null, confirmDel: null, replyTo: null, drawer: null };
+  render();
+  window.scrollTo(0, 0);
+}
+function cycle(d) {
+  const keys = Object.keys(VARIANTS);
+  variant = keys[(keys.indexOf(variant) + d + keys.length) % keys.length];
+  try { history.replaceState(null, '', '?variant=' + variant); } catch (err) {}
+  ui = { editing: null, confirmDel: null, replyTo: null, drawer: null, drawerTab: 'shelf', cFilter: 'all' };
+  render();
+}
+document.addEventListener('keydown', e => {
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+
+// ---------- render ----------
+function render() {
+  const V = { A, B, C }[variant];
+  if (view.page === 'shelf' && !visibleShelf(SHELVES[view.id])) view = { page: 'book', id: 1 };
+  $('#main').html(view.page === 'book' ? V.book(book(view.id)) : V.shelf(SHELVES[view.id]));
+  const showDrawer = variant === 'B' && !!ui.drawer;
+  $('#b-drawer').prop('hidden', !showDrawer).html(showDrawer ? B.drawer() : '');
+  $('body').toggleClass('drawer-open', showDrawer);
+  $('#sidebar-shelves').html(Object.values(SHELVES).filter(visibleShelf).map(s =>
+    `<li class="${view.page === 'shelf' && view.id === s.id ? 'active' : ''}"><a href="#" data-act="open-shelf" data-id="${s.id}">${esc(s.name)}${s.public ? '' : ' <span class="note">(private)</span>'}</a></li>`).join(''));
+  $('#nav-user').text(me);
+  $('#switcher-label').text(variant + ' (' + VARIANTS[variant] + ')');
+  $('#go-book').toggleClass('on', view.page === 'book');
+  $('#go-shelf').toggleClass('on', view.page === 'shelf');
+  $('#state').text(JSON.stringify({
+    variant, me, isAdmin: USERS[me].admin, view, ui, lastAction,
+    shelves: Object.values(SHELVES).map(s => ({ id: s.id, name: s.name, public: s.public, books: s.books })),
+    comments: comments.map(c => ({ id: c.id, target: c.target, author: c.author, parent: c.parent, about: c.about, edited: c.edited, deleted: c.deleted, text: c.text.slice(0, 50) })),
+    shelfEvents: events.length,
+  }, null, 1));
+}
+render();
+</script>
+</body>
+</html>

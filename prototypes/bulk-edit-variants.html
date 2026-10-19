@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bulk Edit Prototype</title>
+<!--
+  PROTOTYPE. Throwaway. Not production code.
+  Question: what should bulk edit (metadata + shelf moves) look like in Calibre-Web?
+  Three variants on a mock of the Calibre-Web "Books" page, switchable via ?variant=A|B|C
+  and the floating bar at the bottom. Assumption: no Calibre-Web checkout exists locally,
+  so this mocks the default Bootstrap 3 theme and page chrome with in-memory data.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/css/bootstrap.min.css">
+<style>
+  body { padding-top: 70px; padding-bottom: 90px; background: #fff; }
+  .navbar-brand { font-weight: bold; }
+  #sidebar { position: fixed; top: 51px; bottom: 0; left: 0; width: 200px; overflow-y: auto; background: #f8f8f8; border-right: 1px solid #e7e7e7; padding: 10px 0; }
+  #sidebar .nav > li > a { padding: 6px 15px; color: #333; }
+  #sidebar .nav > li.active > a { background: #e7e7e7; }
+  #sidebar .nav-header { padding: 10px 15px 4px; font-size: 11px; color: #777; text-transform: uppercase; }
+  #sidebar .shelf.droptarget { background: #dff0d8; outline: 2px dashed #3c763d; }
+  #main { margin-left: 200px; padding: 0 20px; }
+  .book { margin-bottom: 20px; position: relative; }
+  .book .cover { position: relative; height: 220px; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.3); display: flex; align-items: flex-end; padding: 8px; color: #fff; font-weight: bold; text-shadow: 0 1px 2px #000; cursor: pointer; user-select: none; }
+  .book .cover span { font-size: 13px; line-height: 1.2; }
+  .book .meta { margin-top: 6px; font-size: 12px; }
+  .book .meta .title { font-weight: bold; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .book .meta .author { color: #777; }
+  .book .shelf-badges .label { font-weight: normal; margin-right: 2px; }
+  .book .check { position: absolute; top: 6px; left: 6px; width: 24px; height: 24px; background: rgba(255,255,255,.9); border: 1px solid #999; border-radius: 3px; display: none; align-items: center; justify-content: center; font-size: 14px; color: #000; text-shadow: none; }
+  .book.selected .cover { outline: 3px solid #337ab7; outline-offset: 2px; }
+  .book.selected .check { display: flex; background: #337ab7; color: #fff; border-color: #286090; }
+  .book .tray-btn { position: absolute; top: 6px; right: 6px; display: none; }
+  .book:hover .tray-btn { display: block; }
+  /* Variant A */
+  body.vA.selectmode .book .check { display: flex; }
+  #a-bar { position: fixed; left: 0; right: 0; bottom: 0; background: #222; color: #ddd; padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); display: none; z-index: 900; box-shadow: 0 -2px 8px rgba(0,0,0,.3); }
+  body.vA.selectmode #a-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+  #a-bar .sep { flex: 1; }
+  #a-bar .btn { margin: 0; }
+  #a-bar .dropdown-menu li a label { margin: 0; font-weight: normal; cursor: pointer; }
+  #a-bar .dropdown-menu { min-width: 220px; max-height: 60vh; overflow-y: auto; }
+  /* Variant B */
+  body.vB .book:hover .check { display: flex; }
+  #b-panel { position: fixed; top: 51px; right: 0; bottom: 0; width: 320px; background: #fafafa; border-left: 1px solid #ddd; overflow-y: auto; padding: 15px; display: none; z-index: 900; }
+  body.vB.has-selection #main { margin-right: 320px; }
+  body.vB.has-selection #b-panel { display: block; }
+  .tri { display: flex; align-items: center; justify-content: space-between; padding: 5px 8px; border: 1px solid #ddd; border-radius: 3px; margin-bottom: 4px; cursor: pointer; background: #fff; }
+  .tri.all { background: #dff0d8; border-color: #3c763d; }
+  .tri.some { background: #fcf8e3; border-color: #8a6d3b; }
+  .tri .state { font-size: 11px; color: #777; }
+  .field-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .field-row input, .field-row select { flex: 1; }
+  /* Variant C */
+  #c-tray { position: fixed; left: 200px; right: 0; bottom: 0; background: #fff; border-top: 2px solid #337ab7; box-shadow: 0 -2px 10px rgba(0,0,0,.2); z-index: 900; display: none; max-height: 45vh; }
+  #c-tray .tray-head { background: #337ab7; color: #fff; padding: 6px 15px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+  #c-tray .tray-body { display: flex; padding: 10px 15px; gap: 15px; overflow: hidden; }
+  #c-tray .tray-items { flex: 1; overflow-y: auto; max-height: 32vh; }
+  #c-tray .tray-ops { width: 420px; }
+  #c-tray.collapsed .tray-body { display: none; }
+  .chip { display: inline-block; background: #eee; border: 1px solid #ccc; border-radius: 12px; padding: 2px 8px; margin: 2px; font-size: 12px; }
+  .chip a { color: #999; margin-left: 4px; text-decoration: none; }
+  .chip.dim { opacity: .5; }
+  body.vC #main { padding-bottom: 40vh; }
+  body.vC .book .cover { cursor: default; }
+  /* Shared */
+  #switcher { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); background: #ff0; color: #000; border: 2px solid #000; border-radius: 24px; padding: 6px 14px; z-index: 2000; font-family: monospace; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,.4); display: flex; gap: 12px; align-items: center; }
+  #switcher button { background: #000; color: #ff0; border: 0; border-radius: 50%; width: 28px; height: 28px; font-weight: bold; }
+  #state-toggle { position: fixed; top: 60px; right: 10px; z-index: 2001; }
+  #state { position: fixed; top: 95px; right: 10px; width: 360px; max-height: 60vh; overflow: auto; background: #222; color: #9f9; font: 11px/1.3 monospace; padding: 8px; display: none; z-index: 2001; white-space: pre; }
+  #toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%); z-index: 2002; display: none; min-width: 320px; }
+  .note { font-size: 12px; color: #777; }
+  .pager { margin: 0 0 15px; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-default navbar-fixed-top">
+  <div class="container-fluid">
+    <div class="navbar-header"><a class="navbar-brand" href="#">Calibre-Web</a></div>
+    <form class="navbar-form navbar-left"><div class="form-group"><input class="form-control" placeholder="Search" size="30"></div></form>
+    <ul class="nav navbar-nav navbar-right">
+      <li id="a-navbtn" style="display:none"><a href="#" onclick="A.toggleMode();return false"><span class="glyphicon glyphicon-check"></span> <span id="a-navlabel">Select books</span></a></li>
+      <li><a href="#"><span class="glyphicon glyphicon-plus"></span> Upload</a></li>
+      <li><a href="#"><span class="glyphicon glyphicon-dashboard"></span> Admin</a></li>
+      <li><a href="#"><span class="glyphicon glyphicon-user"></span> zach</a></li>
+    </ul>
+  </div>
+</nav>
+
+<div id="sidebar">
+  <ul class="nav">
+    <li class="active"><a href="#" onclick="setView('all');return false">Books</a></li>
+    <li><a href="#">Recently Added</a></li>
+    <li><a href="#">Hot Books</a></li>
+    <li><a href="#">Top Rated</a></li>
+    <li><a href="#">Authors</a></li>
+    <li><a href="#">Series</a></li>
+    <li><a href="#">Categories</a></li>
+  </ul>
+  <div class="nav-header">Shelves</div>
+  <ul class="nav" id="sidebar-shelves"></ul>
+  <ul class="nav"><li><a href="#"><span class="glyphicon glyphicon-plus"></span> Create a shelf</a></li></ul>
+</div>
+
+<div id="main">
+  <h2 id="view-title">Books</h2>
+  <div class="pager">
+    <ul class="pagination" id="pager" style="margin:0"></ul>
+    <span class="note" id="variant-note" style="margin-left:10px"></span>
+  </div>
+  <div class="row" id="grid"></div>
+</div>
+
+<!-- ===== Variant A: selection mode + action bar + modal ===== -->
+<div id="a-bar">
+  <strong id="a-count">0 selected</strong>
+  <button class="btn btn-default btn-sm" onclick="A.selectAll()">Select page</button>
+  <button class="btn btn-default btn-sm" onclick="A.clear()">Clear</button>
+  <span class="sep"></span>
+  <div class="btn-group dropup">
+    <button class="btn btn-primary btn-sm dropdown-toggle" data-toggle="dropdown"><span class="glyphicon glyphicon-list"></span> Shelves <span class="caret"></span></button>
+    <ul class="dropdown-menu" id="a-shelves"></ul>
+  </div>
+  <button class="btn btn-primary btn-sm" data-toggle="modal" data-target="#a-modal"><span class="glyphicon glyphicon-pencil"></span> Metadata</button>
+  <button class="btn btn-danger btn-sm" onclick="deleteSelected()"><span class="glyphicon glyphicon-trash"></span> Delete</button>
+</div>
+
+<div class="modal fade" id="a-modal"><div class="modal-dialog"><div class="modal-content">
+  <div class="modal-header"><button class="close" data-dismiss="modal">&times;</button><h4 class="modal-title">Edit metadata for <span class="a-modal-count">0</span> books</h4></div>
+  <div class="modal-body">
+    <p class="note">Leave a field blank to keep the current value.</p>
+    <div class="form-group"><label>Author</label><input class="form-control" id="a-author" placeholder="Set author for all"></div>
+    <div class="form-group"><label>Series</label><div class="field-row"><input class="form-control" id="a-series" placeholder="Series name"><input class="form-control" id="a-series-index" placeholder="Index" style="max-width:80px"></div></div>
+    <div class="form-group"><label>Tags</label><div class="field-row"><input class="form-control" id="a-tags-add" placeholder="Add tags, comma separated"><input class="form-control" id="a-tags-remove" placeholder="Remove tags"></div></div>
+    <div class="form-group"><label>Publisher</label><input class="form-control" id="a-publisher"></div>
+    <div class="form-group"><label>Rating</label><select class="form-control" id="a-rating"><option value="">Keep</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
+  </div>
+  <div class="modal-footer"><button class="btn btn-default" data-dismiss="modal">Cancel</button><button class="btn btn-primary" onclick="A.applyMeta()">Apply to <span class="a-modal-count">0</span> books</button></div>
+</div></div></div>
+
+<!-- ===== Variant B: persistent side panel, live edits ===== -->
+<div id="b-panel">
+  <h4 style="margin-top:0"><span id="b-count">0</span> selected <button class="btn btn-xs btn-link pull-right" onclick="clearSelection()">clear</button></h4>
+  <p class="note">Tip: drag any selected cover onto a shelf in the sidebar to add all selected books to it.</p>
+  <h5>Shelves <small>(click to toggle, applies at once)</small></h5>
+  <div id="b-shelves"></div>
+  <h5 style="margin-top:20px">Metadata <small>(each row applies on its own)</small></h5>
+  <div class="field-row"><input class="form-control input-sm" id="b-author" placeholder="Author"><button class="btn btn-sm btn-default" onclick="B.set('author')">Set</button></div>
+  <div class="field-row"><input class="form-control input-sm" id="b-series" placeholder="Series"><button class="btn btn-sm btn-default" onclick="B.set('series')">Set</button></div>
+  <div class="field-row"><input class="form-control input-sm" id="b-publisher" placeholder="Publisher"><button class="btn btn-sm btn-default" onclick="B.set('publisher')">Set</button></div>
+  <div class="field-row"><input class="form-control input-sm" id="b-tag" placeholder="Tag"><button class="btn btn-sm btn-default" onclick="B.tag('add')">+</button><button class="btn btn-sm btn-default" onclick="B.tag('remove')">−</button></div>
+  <h5>Tags on selection</h5>
+  <div id="b-tags"></div>
+  <hr>
+  <button class="btn btn-danger btn-sm btn-block" onclick="deleteSelected()">Delete selected books</button>
+</div>
+
+<!-- ===== Variant C: tray that survives navigation ===== -->
+<div id="c-tray" class="collapsed">
+  <div class="tray-head" onclick="C.toggleTray()">
+    <span><span class="glyphicon glyphicon-shopping-cart"></span> Tray: <strong id="c-count">0</strong> books <span class="note" style="color:#cde" id="c-pagehint"></span></span>
+    <span><a href="#" style="color:#fff" onclick="event.stopPropagation();clearSelection();return false">empty tray</a> &nbsp; <span class="glyphicon glyphicon-chevron-up" id="c-chev"></span></span>
+  </div>
+  <div class="tray-body">
+    <div class="tray-items" id="c-items"></div>
+    <div class="tray-ops">
+      <ul class="nav nav-tabs nav-justified" style="margin-bottom:10px">
+        <li class="active"><a href="#c-tab-shelves" data-toggle="tab">Shelves</a></li>
+        <li><a href="#c-tab-meta" data-toggle="tab">Metadata</a></li>
+        <li><a href="#c-tab-delete" data-toggle="tab">Delete</a></li>
+      </ul>
+      <div class="tab-content">
+        <div class="tab-pane active" id="c-tab-shelves">
+          <div class="field-row"><select class="form-control input-sm" id="c-add-shelf"></select><button class="btn btn-sm btn-primary" onclick="C.shelf('add')">Add to shelf</button></div>
+          <div class="field-row"><select class="form-control input-sm" id="c-rm-shelf"></select><button class="btn btn-sm btn-warning" onclick="C.shelf('remove')">Remove from shelf</button></div>
+          <div class="field-row"><select class="form-control input-sm" id="c-mv-from"></select><span style="line-height:30px">&rarr;</span><select class="form-control input-sm" id="c-mv-to"></select><button class="btn btn-sm btn-success" onclick="C.move()">Move</button></div>
+          <p class="note">Move = remove from the left shelf, add to the right shelf.</p>
+        </div>
+        <div class="tab-pane" id="c-tab-meta">
+          <div class="field-row"><select class="form-control input-sm" id="c-field" style="max-width:120px"><option value="author">Author</option><option value="series">Series</option><option value="publisher">Publisher</option><option value="tags+">Add tag</option><option value="tags-">Remove tag</option><option value="rating">Rating</option></select><input class="form-control input-sm" id="c-value" placeholder="Value"><button class="btn btn-sm btn-primary" onclick="C.meta()">Apply</button></div>
+          <p class="note">One field at a time. Each apply is logged in the state panel.</p>
+        </div>
+        <div class="tab-pane" id="c-tab-delete">
+          <button class="btn btn-danger" onclick="deleteSelected()">Delete all books in tray</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Shared prototype chrome ===== -->
+<div id="switcher">
+  <button onclick="cycle(-1)">&larr;</button>
+  <span id="switcher-label"></span>
+  <button onclick="cycle(1)">&rarr;</button>
+</div>
+<button id="state-toggle" class="btn btn-xs btn-default" onclick="toggleState()">state</button>
+<pre id="state"></pre>
+<div id="toast" class="alert alert-success"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/3.4.1/js/bootstrap.min.js"></script>
+<script>
+// ---------- mock data ----------
+const shelves = [
+  { id: 1, name: 'To Read' }, { id: 2, name: 'Favorites' }, { id: 3, name: 'Sci-Fi' }, { id: 4, name: 'History' }, { id: 5, name: 'Kobo sync' },
+];
+const authors = ['Ursula K. Le Guin', 'Octavia Butler', 'Iain M. Banks', 'Barbara Tuchman', 'N. K. Jemisin', 'Ted Chiang', 'Mary Beard', 'Becky Chambers'];
+const seriesList = ['Earthsea', 'Culture', 'Broken Earth', 'Wayfarers', ''];
+const tagPool = ['fiction', 'sf', 'history', 'essays', 'award', 'reread', 'library'];
+const hues = [200, 20, 120, 280, 340, 50, 160, 240];
+let books = [];
+for (let i = 1; i <= 36; i++) {
+  const a = authors[i % authors.length];
+  books.push({
+    id: i,
+    title: ['The', 'A', 'Last', 'First', 'Dark', 'Quiet'][i % 6] + ' ' + ['Dispossessed', 'Parable', 'Player', 'Mirror', 'Season', 'Exhalation', 'SPQR', 'Record', 'Tower', 'Gate', 'Harbor', 'Orbit'][i % 12] + ' ' + (i > 12 ? 'Vol. ' + Math.ceil(i / 12) : ''),
+    author: a,
+    series: seriesList[i % seriesList.length],
+    seriesIndex: (i % 4) + 1,
+    tags: [tagPool[i % 7], tagPool[(i * 3) % 7]].filter((t, k, arr) => arr.indexOf(t) === k),
+    publisher: ['Tor', 'Orbit', 'Gollancz', 'Penguin'][i % 4],
+    rating: (i % 5) + 1,
+    shelves: [i % 3 === 0 ? 1 : null, i % 5 === 0 ? 2 : null, i % 4 === 1 ? 3 : null].filter(Boolean),
+    hue: hues[i % hues.length],
+  });
+}
+const PAGE = 12;
+let page = 1;
+let view = 'all';               // 'all' or shelf id
+let selection = new Set();      // book ids
+let log = [];                   // applied operations
+let variant = new URLSearchParams(location.search).get('variant') || 'A';
+const VARIANTS = {
+  A: 'Select mode + action bar + modal',
+  B: 'Persistent side panel, live edits, drag to shelf',
+  C: 'Tray that survives navigation',
+};
+
+// ---------- shared rendering ----------
+function visibleBooks() {
+  const list = view === 'all' ? books : books.filter(b => b.shelves.includes(view));
+  return list;
+}
+function pageBooks() {
+  const v = visibleBooks();
+  return v.slice((page - 1) * PAGE, page * PAGE);
+}
+function shelfName(id) { return (shelves.find(s => s.id === id) || {}).name; }
+function setView(v) {
+  view = v; page = 1;
+  if (variant !== 'C') clearSelection(false);
+  render();
+}
+function setPage(p) { page = p; if (variant !== 'C') clearSelection(false); render(); }
+function render() {
+  document.body.className = 'v' + variant + (selection.size ? ' has-selection' : '') + (A.mode ? ' selectmode' : '');
+  $('#view-title').text(view === 'all' ? 'Books' : 'Shelf: ' + shelfName(view));
+  $('#variant-note').text('Variant ' + variant + ': ' + VARIANTS[variant]);
+  // sidebar shelves
+  $('#sidebar-shelves').html(shelves.map(s => `<li class="shelf ${view === s.id ? 'active' : ''}" data-shelf="${s.id}"><a href="#" onclick="setView(${s.id});return false">${s.name} <span class="badge pull-right">${books.filter(b => b.shelves.includes(s.id)).length}</span></a></li>`).join(''));
+  // pager
+  const n = Math.max(1, Math.ceil(visibleBooks().length / PAGE));
+  $('#pager').html(Array.from({ length: n }, (_, k) => `<li class="${page === k + 1 ? 'active' : ''}"><a href="#" onclick="setPage(${k + 1});return false">${k + 1}</a></li>`).join(''));
+  // grid
+  $('#grid').html(pageBooks().map(b => `
+    <div class="col-xs-6 col-sm-4 col-md-3 col-lg-2 book ${selection.has(b.id) ? 'selected' : ''}" data-id="${b.id}" draggable="${variant === 'B' && selection.has(b.id)}">
+      <div class="cover" style="background:linear-gradient(160deg,hsl(${b.hue},50%,45%),hsl(${b.hue + 40},40%,25%))" onclick="coverClick(${b.id}, event)">
+        <div class="check" onclick="toggle(${b.id}, event)">${selection.has(b.id) ? '&#10003;' : ''}</div>
+        ${variant === 'C' ? `<button class="btn btn-xs ${selection.has(b.id) ? 'btn-success' : 'btn-default'} tray-btn" onclick="toggle(${b.id}, event)">${selection.has(b.id) ? '&#10003; in tray' : '+ tray'}</button>` : ''}
+        <span>${b.title}</span>
+      </div>
+      <div class="meta">
+        <span class="title" title="${b.title}">${b.title}</span>
+        <span class="author">${b.author}</span><br>
+        <span class="note">${b.series ? b.series + ' #' + b.seriesIndex + ' &middot; ' : ''}${'&#9733;'.repeat(b.rating)}</span><br>
+        <span class="shelf-badges">${b.shelves.map(s => `<span class="label label-default">${shelfName(s)}</span>`).join('')} ${b.tags.map(t => `<span class="label label-info">${t}</span>`).join('')}</span>
+      </div>
+    </div>`).join(''));
+  A.render(); B.render(); C.render();
+  renderState();
+}
+function coverClick(id, ev) {
+  if (variant === 'A' && A.mode) return toggle(id, ev);
+  if (variant === 'B') return toggle(id, ev);
+  toast('Open book detail page for #' + id + ' (stub)', 'info');
+}
+let lastClicked = null;
+function toggle(id, ev) {
+  ev && ev.stopPropagation();
+  if (ev && ev.shiftKey && lastClicked != null) {
+    const ids = pageBooks().map(b => b.id);
+    const [a, b] = [ids.indexOf(lastClicked), ids.indexOf(id)].sort((x, y) => x - y);
+    ids.slice(a, b + 1).forEach(i => selection.add(i));
+  } else if (selection.has(id)) selection.delete(id); else selection.add(id);
+  lastClicked = id;
+  render();
+}
+function clearSelection(rerender = true) { selection.clear(); if (rerender) render(); }
+function selected() { return books.filter(b => selection.has(b.id)); }
+function apply(desc, fn) {
+  const targets = selected();
+  targets.forEach(fn);
+  log.unshift({ op: desc, books: targets.map(b => b.id) });
+  toast(desc + ' → ' + targets.length + ' books');
+  render();
+}
+function deleteSelected() {
+  if (!confirm('Delete ' + selection.size + ' books? (prototype: in-memory only)')) return;
+  const ids = [...selection];
+  books = books.filter(b => !selection.has(b.id));
+  log.unshift({ op: 'delete', books: ids });
+  selection.clear();
+  toast('Deleted ' + ids.length + ' books', 'danger');
+  render();
+}
+// tri-state per shelf over the selection
+function shelfState(sid) {
+  const s = selected();
+  const on = s.filter(b => b.shelves.includes(sid)).length;
+  return on === 0 ? 'none' : on === s.length ? 'all' : 'some';
+}
+function addToShelf(sid) { apply('add to shelf "' + shelfName(sid) + '"', b => { if (!b.shelves.includes(sid)) b.shelves.push(sid); }); }
+function removeFromShelf(sid) { apply('remove from shelf "' + shelfName(sid) + '"', b => { b.shelves = b.shelves.filter(x => x !== sid); }); }
+
+// ---------- Variant A ----------
+const A = {
+  mode: false,
+  pending: {},   // shelfId -> 'add' | 'remove'
+  toggleMode() { A.mode = !A.mode; if (!A.mode) clearSelection(false); render(); },
+  selectAll() { pageBooks().forEach(b => selection.add(b.id)); render(); },
+  clear() { clearSelection(); },
+  render() {
+    $('#a-navbtn').toggle(variant === 'A');
+    $('#a-navlabel').text(A.mode ? 'Done selecting' : 'Select books');
+    $('#a-count').text(selection.size + ' selected');
+    $('.a-modal-count').text(selection.size);
+    $('#a-shelves').html(shelves.map(s => {
+      const st = shelfState(s.id);
+      const p = A.pending[s.id];
+      const label = p === 'add' ? ' (will add)' : p === 'remove' ? ' (will remove)' : st === 'some' ? ' (some)' : '';
+      const checked = p === 'add' || (!p && st === 'all');
+      return `<li><a href="#" onclick="A.cycleShelf(${s.id});return false"><label><input type="checkbox" ${checked ? 'checked' : ''} ${(!p && st === 'some') ? 'data-ind=1' : ''}> ${s.name}<span class="note">${label}</span></label></a></li>`;
+    }).join('') + `<li class="divider"></li><li><a href="#" onclick="A.applyShelves();return false"><strong>Apply shelf changes</strong></a></li>`);
+    $('#a-shelves input[data-ind]').each(function () { this.indeterminate = true; });
+  },
+  cycleShelf(sid) {
+    const st = shelfState(sid);
+    const cur = A.pending[sid] || (st === 'all' ? 'add' : 'remove');
+    A.pending[sid] = cur === 'add' ? 'remove' : 'add';
+    if ((A.pending[sid] === 'add' && st === 'all') || (A.pending[sid] === 'remove' && st === 'none')) delete A.pending[sid];
+    A.render(); renderState();
+  },
+  applyShelves() {
+    Object.entries(A.pending).forEach(([sid, op]) => op === 'add' ? addToShelf(+sid) : removeFromShelf(+sid));
+    A.pending = {};
+  },
+  applyMeta() {
+    const v = id => $('#' + id).val().trim();
+    const author = v('a-author'), series = v('a-series'), sIdx = v('a-series-index'), add = v('a-tags-add'), rm = v('a-tags-remove'), pub = v('a-publisher'), rating = v('a-rating');
+    const parts = [];
+    if (author) parts.push('author=' + author);
+    if (series) parts.push('series=' + series + (sIdx ? ' #' + sIdx : ''));
+    if (add) parts.push('+tags ' + add);
+    if (rm) parts.push('-tags ' + rm);
+    if (pub) parts.push('publisher=' + pub);
+    if (rating) parts.push('rating=' + rating);
+    if (!parts.length) return toast('Nothing to apply', 'warning');
+    apply('metadata: ' + parts.join(', '), b => {
+      if (author) b.author = author;
+      if (series) { b.series = series; if (sIdx) b.seriesIndex = +sIdx; }
+      if (add) add.split(',').map(t => t.trim()).filter(Boolean).forEach(t => { if (!b.tags.includes(t)) b.tags.push(t); });
+      if (rm) { const r = rm.split(',').map(t => t.trim()); b.tags = b.tags.filter(t => !r.includes(t)); }
+      if (pub) b.publisher = pub;
+      if (rating) b.rating = +rating;
+    });
+    $('#a-modal').modal('hide');
+    $('#a-modal input').val(''); $('#a-rating').val('');
+  },
+};
+$('#a-shelves').on('click', 'input', e => e.preventDefault());
+
+// ---------- Variant B ----------
+const B = {
+  render() {
+    $('#b-count').text(selection.size);
+    $('#b-shelves').html(shelves.map(s => {
+      const st = shelfState(s.id);
+      return `<div class="tri ${st}" onclick="B.toggleShelf(${s.id})"><span>${s.name}</span><span class="state">${st === 'all' ? 'all on &middot; click to remove' : st === 'some' ? 'some on &middot; click to add rest' : 'click to add'}</span></div>`;
+    }).join(''));
+    const tags = {};
+    selected().forEach(b => b.tags.forEach(t => tags[t] = (tags[t] || 0) + 1));
+    $('#b-tags').html(Object.entries(tags).map(([t, n]) => `<span class="chip">${t} <small>${n}/${selection.size}</small><a href="#" onclick="B.removeTag('${t}');return false">&times;</a></span>`).join('') || '<span class="note">none</span>');
+  },
+  toggleShelf(sid) { shelfState(sid) === 'all' ? removeFromShelf(sid) : addToShelf(sid); },
+  set(field) {
+    const val = $('#b-' + field).val().trim();
+    if (!val) return;
+    apply(field + '=' + val, b => b[field] = val);
+    $('#b-' + field).val('');
+  },
+  tag(op) {
+    const t = $('#b-tag').val().trim(); if (!t) return;
+    op === 'add' ? apply('+tag ' + t, b => { if (!b.tags.includes(t)) b.tags.push(t); }) : B.removeTag(t);
+    $('#b-tag').val('');
+  },
+  removeTag(t) { apply('-tag ' + t, b => b.tags = b.tags.filter(x => x !== t)); },
+};
+// drag selected covers onto sidebar shelves
+$('#grid').on('dragstart', '.book', function (e) { e.originalEvent.dataTransfer.setData('text', 'selection'); });
+$('#sidebar').on('dragover', '.shelf', function (e) { e.preventDefault(); $(this).addClass('droptarget'); })
+  .on('dragleave', '.shelf', function () { $(this).removeClass('droptarget'); })
+  .on('drop', '.shelf', function (e) { e.preventDefault(); addToShelf(+this.dataset.shelf); });
+
+// ---------- Variant C ----------
+const C = {
+  open: false,
+  toggleTray() { C.open = !C.open; C.render(); },
+  render() {
+    $('#c-tray').toggle(variant === 'C' && selection.size > 0).toggleClass('collapsed', !C.open);
+    $('#c-chev').attr('class', 'glyphicon glyphicon-chevron-' + (C.open ? 'down' : 'up'));
+    $('#c-count').text(selection.size);
+    const onPage = pageBooks().filter(b => selection.has(b.id)).length;
+    $('#c-pagehint').text(selection.size ? `(${onPage} on this page, ${selection.size - onPage} elsewhere)` : '');
+    $('#c-items').html(selected().map(b => `<span class="chip ${pageBooks().includes(b) ? '' : 'dim'}">${b.title} <small>${b.author.split(' ').pop()}</small><a href="#" onclick="toggle(${b.id});return false">&times;</a></span>`).join(''));
+    const opts = shelves.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    ['c-add-shelf', 'c-rm-shelf', 'c-mv-from', 'c-mv-to'].forEach(id => { const cur = $('#' + id).val(); $('#' + id).html(opts); if (cur) $('#' + id).val(cur); });
+    if (view !== 'all') $('#c-mv-from').val(view);
+  },
+  shelf(op) { const sid = +$('#c-' + (op === 'add' ? 'add' : 'rm') + '-shelf').val(); op === 'add' ? addToShelf(sid) : removeFromShelf(sid); C.open = true; },
+  move() {
+    const from = +$('#c-mv-from').val(), to = +$('#c-mv-to').val();
+    if (from === to) return toast('Pick two different shelves', 'warning');
+    apply(`move "${shelfName(from)}" → "${shelfName(to)}"`, b => { b.shelves = b.shelves.filter(x => x !== from); if (!b.shelves.includes(to)) b.shelves.push(to); });
+    C.open = true;
+  },
+  meta() {
+    const f = $('#c-field').val(), v = $('#c-value').val().trim(); if (!v) return;
+    if (f === 'tags+') apply('+tag ' + v, b => { if (!b.tags.includes(v)) b.tags.push(v); });
+    else if (f === 'tags-') apply('-tag ' + v, b => b.tags = b.tags.filter(x => x !== v));
+    else if (f === 'rating') apply('rating=' + v, b => b.rating = +v);
+    else apply(f + '=' + v, b => b[f] = v);
+    $('#c-value').val(''); C.open = true;
+  },
+};
+
+// ---------- prototype chrome ----------
+function cycle(d) {
+  const keys = Object.keys(VARIANTS);
+  variant = keys[(keys.indexOf(variant) + d + keys.length) % keys.length];
+  history.replaceState(null, '', '?variant=' + variant);
+  A.mode = false; A.pending = {}; selection.clear();
+  render();
+}
+document.addEventListener('keydown', e => {
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || e.target.isContentEditable) return;
+  if (e.key === 'ArrowLeft') cycle(-1);
+  if (e.key === 'ArrowRight') cycle(1);
+});
+function toggleState() { $('#state').toggle(); }
+function renderState() {
+  $('#switcher-label').text(variant + ' (' + VARIANTS[variant] + ')');
+  $('#state').text(JSON.stringify({
+    variant, view, page,
+    selection: [...selection],
+    pendingShelfOps: variant === 'A' ? A.pending : undefined,
+    selectedBooks: selected().map(b => ({ id: b.id, title: b.title, author: b.author, series: b.series, tags: b.tags, shelves: b.shelves.map(shelfName), rating: b.rating })),
+    log: log.slice(0, 10),
+  }, null, 1));
+}
+let toastTimer;
+function toast(msg, kind = 'success') {
+  $('#toast').attr('class', 'alert alert-' + kind).text(msg).stop(true, true).fadeIn(100);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('#toast').fadeOut(300), 2500);
+}
+render();
+</script>
+</body>
+</html>

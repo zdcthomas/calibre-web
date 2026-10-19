@@ -18,6 +18,7 @@
 
 import os
 import zipfile
+from urllib.parse import unquote
 from lxml import etree
 
 from . import isoLanguages, cover
@@ -35,7 +36,8 @@ def _extract_cover(zip_file, cover_file, cover_path, tmp_file_name):
         return None
 
     cf = extension = None
-    zip_cover_path = os.path.join(cover_path, cover_file).replace('\\', '/')
+    # OPF hrefs are URLs ("My%20Book.jpg"); zip member names are not
+    zip_cover_path = unquote(os.path.join(cover_path, cover_file).replace('\\', '/'))
 
     prefix = os.path.splitext(tmp_file_name)[0]
     tmp_cover_name = prefix + '.' + os.path.basename(zip_cover_path)
@@ -43,7 +45,12 @@ def _extract_cover(zip_file, cover_file, cover_path, tmp_file_name):
     if len(ext) > 1:
         extension = ext[1].lower()
     if extension in cover.COVER_EXTENSIONS:
-        cf = zip_file.read(zip_cover_path)
+        try:
+            cf = zip_file.read(zip_cover_path)
+        except KeyError:
+            # a cover the OPF names but the zip lacks must not cost the book its title and author
+            log.warning("Cover %s listed in epub but missing from archive", zip_cover_path)
+            return None
     return cover.cover_processing(tmp_file_name, cf, extension)
 
 

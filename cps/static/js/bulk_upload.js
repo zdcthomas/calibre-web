@@ -63,11 +63,11 @@ $(function () {
         done++;
         if (res && res.success) {
             uploaded.push(res.book_id);
-            setStatus(item, "success", '<a href="' + res.location + '">' + esc(res.title) + "</a>" +
+            setStatus(item, "success", '<a href="' + res.location + '" target="_blank" rel="noopener">' + esc(res.title) + "</a>" +
                 (messages ? "<br>" + messages : ""));
         } else if (res && res.duplicate) {
             failed++;
-            setStatus(item, "warning", esc(form.data("duplicate")) + ' <a href="' + res.location + '">' +
+            setStatus(item, "warning", esc(form.data("duplicate")) + ' <a href="' + res.location + '" target="_blank" rel="noopener">' +
                 esc(res.title) + '</a> &middot; <a href="#" class="bulk-upload-anyway">' + esc(form.data("anyway")) + "</a>");
             item.tr.find(".bulk-upload-anyway").click(function (e) {
                 e.preventDefault();
@@ -107,6 +107,13 @@ $(function () {
         xhr.addEventListener("error", function () { finish(item, xhr); });
         xhr.send(data);
     }
+
+    // leaving the page kills the uploads still in flight, so make the browser ask first
+    $(window).on("beforeunload", function () {
+        if (active > 0 || queue.length) {
+            return form.data("leaving");
+        }
+    });
 
     function next() {
         while (active < LIMIT && queue.length) {

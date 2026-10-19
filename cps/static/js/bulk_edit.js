@@ -74,16 +74,43 @@ $(function () {
         }).fail(fail);
     }
 
+    var lastClicked = null;
     $(document).on("click", ".bulk-check", function (e) {
         e.preventDefault();
         e.stopPropagation();
         var id = $(this).data("bookId");
-        if (selection[id]) {
+        var checks = $(".bulk-check");
+        var here = checks.index(this);
+        var last = lastClicked === null ? -1 : checks.index(lastClicked);
+        if (e.shiftKey && last >= 0 && last !== here) {
+            // shift-click: select every cover between the last clicked one and this one, in page order
+            checks.slice(Math.min(last, here), Math.max(last, here) + 1).each(function () {
+                selection[$(this).data("bookId")] = true;
+            });
+        } else if (selection[id]) {
             delete selection[id];
         } else {
             selection[id] = true;
         }
+        lastClicked = this;
         render();
+    });
+
+    $("#bulk-delete").click(function () {
+        var count = ids().length;
+        if (!count || !window.confirm($(this).data("confirm").replace("{count}", count))) {
+            return;
+        }
+        post("/ajax/deletebook", {bookid: ids()}).done(function (res) {
+            var errors = (res || []).filter(function (item) { return item.type === "danger"; });
+            if (errors.length) {
+                flash("danger", errors.map(function (item) { return item.message; }).join("<br>"));
+            } else {
+                selection = {};
+                render();
+                location.reload();
+            }
+        }).fail(fail);
     });
 
     $("#bulk-clear").click(function (e) {

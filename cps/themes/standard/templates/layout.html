@@ -172,6 +172,9 @@
       {% for field, label in [('authors', _('Authors')), ('series', _('Series')), ('categories', _('Categories')), ('publishers', _('Publishers')), ('languages', _('Languages'))] %}
       <div class="input-group input-group-sm bulk-field"><input class="form-control" data-field="{{ field }}" placeholder="{{ label }}"><span class="input-group-btn"><button class="btn btn-default bulk-set" type="button">{{_('Set')}}</button></span></div>
       {% endfor %}
+      {% if current_user.role_delete_books() %}
+      <button type="button" class="btn btn-danger btn-sm btn-block" id="bulk-delete" style="margin-top:15px" data-confirm="{{_('Delete {count} books and their files? This cannot be undone.')}}">{{_('Delete selected books')}}</button>
+      {% endif %}
     </div>
     {% endif %}
     <div class="modal fade" id="bookDetailsModal" tabindex="-1" role="dialog" aria-labelledby="bookDetailsModalLabel">

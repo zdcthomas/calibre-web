@@ -24,6 +24,10 @@ These are user discussion threads (author, time, text). They are not Calibre's
 "comments" column, which is the book description. Real storage would be a new
 table in `app.db` (`cps/ub.py`), never in `metadata.db`.
 
-Verdict: pending.
+Verdict (2026-10-19): **A** wins. A "Discussion" thread under the book
+description and under the shelf grid, one level of replies, shelf comments
+that can be "about" one book (listed on that book's page under "Mentioned in
+shelf discussions"), and a placeholder for a deleted comment that has replies.
+B and C are dropped.
 
 This branch is the primary source for that decision. Nothing here ships.

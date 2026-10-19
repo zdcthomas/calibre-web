@@ -7,17 +7,30 @@ $(function () {
         return;
     }
     var LIMIT = 2; // ponytail: parallel uploads fixed at 2, make it a setting if servers choke
-    var queue = [], active = 0, done = 0, failed = 0, total = 0;
+    var queue = [], active = 0, done = 0, failed = 0, total = 0, uploaded = [];
 
     var modal = $('<div class="modal fade" id="bulk-upload-modal" data-backdrop="static" data-keyboard="false">' +
         '<div class="modal-dialog modal-lg"><div class="modal-content">' +
         '<div class="modal-header"><h4 class="modal-title"></h4></div>' +
         '<div class="modal-body" style="max-height:60vh;overflow-y:auto"><table class="table table-condensed" id="bulk-upload-rows"></table></div>' +
         '<div class="modal-footer"><span class="pull-left text-muted" id="bulk-upload-summary"></span>' +
+        '<span class="pull-left text-muted" id="bulk-upload-next" style="display:none;margin-left:1em"></span>' +
         '<button type="button" class="btn btn-default" id="bulk-upload-close" disabled></button></div>' +
         "</div></div></div>").appendTo("body");
     modal.find(".modal-title").text(form.data("title"));
+    $("#bulk-upload-next").text(form.data("next"));
     $("#bulk-upload-close").text(form.data("footer")).click(function () {
+        // hand the new books to the bulk edit panel, so shelves and metadata can be set in one go
+        if (uploaded.length) {
+            var selection = {};
+            try {
+                selection = JSON.parse(sessionStorage.getItem("bulk-selection")) || {};
+            } catch (e) { /* start fresh */ }
+            uploaded.forEach(function (id) { selection[id] = true; });
+            try {
+                sessionStorage.setItem("bulk-selection", JSON.stringify(selection));
+            } catch (e) { /* no storage, no selection */ }
+        }
         location.reload(); // flashes, sidebar counts and the new books all need a fresh page
     });
 
@@ -29,6 +42,7 @@ $(function () {
         $("#bulk-upload-summary").text(form.data("summary")
             .replace("{done}", done).replace("{total}", total).replace("{failed}", failed));
         $("#bulk-upload-close").prop("disabled", done < total);
+        $("#bulk-upload-next").toggle(done >= total && uploaded.length > 0);
     }
 
     function setStatus(item, kind, html) {
@@ -48,6 +62,7 @@ $(function () {
         active--;
         done++;
         if (res && res.success) {
+            uploaded.push(res.book_id);
             setStatus(item, "success", '<a href="' + res.location + '">' + esc(res.title) + "</a>" +
                 (messages ? "<br>" + messages : ""));
         } else if (res && res.duplicate) {
@@ -107,6 +122,7 @@ $(function () {
         }
         $("#bulk-upload-rows").empty();
         queue = [];
+        uploaded = [];
         active = done = failed = 0;
         total = files.length;
         $.each(files, function (i, file) {

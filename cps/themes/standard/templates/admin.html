@@ -57,6 +57,45 @@
     </div>
   </div>
 
+  <div class="row" id="logged-in">
+    <div class="col">
+      <h2>{{_('Logged-in Users')}}</h2>
+      <p class="text-muted small">{{_('Browser logins that have not expired (they last 31 days). "Last seen" updates at most every 5 minutes. OPDS readers and Kobo sync send their password with each request and do not show here.')}}</p>
+      {% if logged_in %}
+      <div class="table-responsive">
+      <table class="table table-striped" id="table_sessions">
+        <tr>
+          <th>{{_('User')}}</th>
+          <th>{{_('Last seen')}}</th>
+          <th class="hidden-xs">{{_('Logged in')}}</th>
+          <th>{{_('IP address')}}</th>
+          <th class="hidden-xs">{{_('Device')}}</th>
+          <th></th>
+        </tr>
+        {% for s in logged_in %}
+        <tr>
+          <td>{{ s.user.name }}{% if s.current %} <span class="label label-default">{{_('you, here')}}</span>{% endif %}</td>
+          <td>{% if s.online %}<span class="label label-success">{{_('Online')}}</span> {% endif %}
+            {% if s.last_seen %}<span title="{{ s.last_seen|formatdatetime }}">{{ s.last_seen_ago }}</span>{% else %}<span class="text-muted">{{_('Not recorded')}}</span>{% endif %}</td>
+          <td class="hidden-xs">{{ s.login|formatdatetime }}{% if s.login_estimated %} <span class="text-muted" title="{{_('Estimated from the expiry date')}}">*</span>{% endif %}</td>
+          <td>{{ s.ip or '' }}</td>
+          <td class="hidden-xs" title="{{ s.user_agent }}">{{ s.device }}</td>
+          <td>
+            <form method="POST" action="{{ url_for('admin.end_session', session_id=s.id) }}" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button type="submit" class="btn btn-xs btn-default" title="{{_('Log this browser out')}}">{{_('End session')}}</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+      </div>
+      {% else %}
+      <p>{{_('Nobody is logged in.')}}</p>
+      {% endif %}
+    </div>
+  </div>
+
   <div class="row">
     <div class="col">
       <h2>{{_('Email Server Settings')}}</h2>

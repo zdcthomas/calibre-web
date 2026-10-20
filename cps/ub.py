@@ -23,7 +23,7 @@ import sys
 from datetime import datetime, timezone, timedelta
 import itertools
 import uuid
-from flask import session as flask_session
+from flask import session as flask_session, request as flask_request
 from binascii import hexlify
 
 from .cw_login import AnonymousUserMixin, current_user
@@ -79,6 +79,9 @@ def store_user_session():
             if not check_user_session(_user, _id, _random):
                 expiry = int((datetime.now()  + timedelta(days=31)).timestamp())
                 user_session = User_Sessions(_user, _id, _random, expiry)
+                user_session.created = user_session.last_seen = datetime.now(timezone.utc)
+                user_session.ip = _client_ip()
+                user_session.user_agent = flask_request.headers.get('User-Agent', '')[:300]
                 session.add(user_session)
                 session.commit()
                 log.debug("Login and store session : " + _id)
@@ -89,6 +92,31 @@ def store_user_session():
             log.exception(e)
     else:
         log.error("No user id in session")
+
+
+def _client_ip():
+    try:
+        return flask_request.remote_addr
+    except RuntimeError:  # outside a request
+        return None
+
+
+SESSION_TOUCH_SECONDS = 300
+
+
+# Record that a stored session made a request: at most one write per SESSION_TOUCH_SECONDS.
+def touch_user_session(entry):
+    now = datetime.now(timezone.utc)
+    last = entry.last_seen.replace(tzinfo=timezone.utc) if entry.last_seen else None
+    if last and (now - last).total_seconds() < SESSION_TOUCH_SECONDS:
+        return
+    try:
+        entry.last_seen = now
+        entry.ip = _client_ip() or entry.ip
+        session.commit()
+    except (exc.OperationalError, exc.InvalidRequestError) as e:
+        session.rollback()
+        log.error_or_exception(e)
 
 
 def delete_user_session(user_id, session_key):
@@ -348,6 +376,11 @@ class User_Sessions(Base):
     session_key = Column(String, default="")
     random = Column(String, default="")
     expiry = Column(Integer)
+    # Shown on the admin page; NULL for sessions stored before these columns existed.
+    created = Column(DateTime, nullable=True)
+    last_seen = Column(DateTime, nullable=True)
+    ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
 
 
     def __init__(self, user_id, session_key, random, expiry):
@@ -664,6 +697,16 @@ def migrate_user_session_table(engine, _session):
             trans.commit()
 
 
+# Columns for the admin page's "who is logged in" list
+def migrate_user_session_activity(engine):
+    with engine.begin() as conn:  # one transaction, committed on exit
+        present = {row[1] for row in conn.execute(text("PRAGMA table_info(user_session)"))}
+        for name, kind in (("created", "DATETIME"), ("last_seen", "DATETIME"), ("ip", "VARCHAR"),
+                           ("user_agent", "VARCHAR")):
+            if name not in present:
+                conn.execute(text("ALTER TABLE user_session ADD COLUMN {} {}".format(name, kind)))
+
+
 def migrate_remote_auth_token_table(engine, _session):
     try:
         _session.query(exists().where(RemoteAuthToken.request_ip)).scalar()
@@ -684,6 +727,7 @@ def migrate_Database(_session):
     add_missing_tables(engine, _session)
     migrate_registration_table(engine, _session)
     migrate_user_session_table(engine, _session)
+    migrate_user_session_activity(engine)
     migrate_remote_auth_token_table(engine, _session)
 
 

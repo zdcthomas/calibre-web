@@ -28,13 +28,13 @@ import operator
 import time
 import sys
 import string
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from datetime import time as datetime_time
 from functools import wraps
 from urllib.parse import urlparse
 
 from flask import Blueprint, flash, redirect, url_for, abort, request, make_response, \
-    send_from_directory, g, jsonify
+    send_from_directory, g, jsonify, session as flask_session
 from markupsafe import Markup
 from .cw_login import current_user
 from flask_babel import gettext as _
@@ -234,8 +234,62 @@ def admin():
 
     return render_title_template("admin.html", allUser=all_user, config=config, commit=commit,
                                  feature_support=feature_support, schedule_time=schedule_time,
-                                 schedule_duration=schedule_duration,
+                                 schedule_duration=schedule_duration, logged_in=_logged_in_sessions(),
                                  title=_("Admin page"), page="admin")
+
+
+ONLINE_MINUTES = 15
+
+
+def _device_name(user_agent):
+    """A short "Browser on System" label from a User-Agent string."""
+    if not user_agent:
+        return ""
+    browser = next((name for key, name in (("KOReader", "KOReader"), ("Edg/", "Edge"), ("OPR/", "Opera"),
+                                           ("Firefox/", "Firefox"), ("Chrome/", "Chrome"), ("Safari/", "Safari"))
+                    if key in user_agent), _("Other browser"))
+    system = next((name for key, name in (("Android", "Android"), ("iPhone", "iPhone"), ("iPad", "iPad"),
+                                          ("Kindle", "Kindle"), ("Windows", "Windows"), ("Mac OS X", "macOS"),
+                                          ("CrOS", "ChromeOS"), ("Linux", "Linux"))
+                   if key in user_agent), "")
+    return _("%(browser)s on %(system)s", browser=browser, system=system) if system else browser
+
+
+def _logged_in_sessions():
+    """Stored login sessions that have not expired, most recently active first."""
+    now = datetime.now(timezone.utc)
+    utc = lambda d: d.replace(tzinfo=timezone.utc) if d and d.tzinfo is None else d
+    rows = ub.session.query(ub.User_Sessions, ub.User).join(ub.User, ub.User.id == ub.User_Sessions.user_id) \
+        .filter(ub.User_Sessions.expiry > int(now.timestamp())).all()
+    sessions = []
+    for entry, user in rows:
+        last_seen = utc(entry.last_seen)
+        sessions.append(dict(
+            id=entry.id, user=user,
+            # Older rows have no created column; expiry is set to login + 31 days (ub.store_user_session).
+            login=utc(entry.created) or datetime.fromtimestamp(entry.expiry - 31 * 86400, timezone.utc),
+            login_estimated=entry.created is None,
+            last_seen=last_seen,
+            last_seen_ago=format_timedelta(last_seen - now, add_direction=True) if last_seen else None,
+            online=bool(last_seen and now - last_seen < timedelta(minutes=ONLINE_MINUTES)),
+            ip=entry.ip, device=_device_name(entry.user_agent), user_agent=entry.user_agent or "",
+            current=entry.user_id == current_user.id and entry.session_key == flask_session.get("_id")))
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    sessions.sort(key=lambda s: (s["last_seen"] or oldest, s["login"]), reverse=True)
+    return sessions
+
+
+@admi.route("/admin/session/<int:session_id>/end", methods=["POST"])
+@user_login_required
+@admin_required
+def end_session(session_id):
+    entry = ub.session.query(ub.User_Sessions).filter(ub.User_Sessions.id == session_id).first()
+    if entry:
+        name = ub.session.query(ub.User.name).filter(ub.User.id == entry.user_id).scalar()
+        ub.session.delete(entry)
+        ub.session_commit("Admin {} ended session {} of user {}".format(current_user.id, session_id, name))
+        flash(_("The session is ended. That browser must log in again."), category="success")
+    return redirect(url_for("admin.admin") + "#logged-in")
 
 
 @admi.route("/admin/dbconfig", methods=["GET", "POST"])

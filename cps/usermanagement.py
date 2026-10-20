@@ -159,6 +159,7 @@ def load_user(user_id, random, session_key):
                                                           ub.User_Sessions.session_key == session_key).first()
         if not entry or entry.user_id != user.id:
             return None
+        ub.touch_user_session(entry)
     elif random:
         entry = ub.session.query(ub.User_Sessions).filter(ub.User_Sessions.random == random).first()
         if not entry or entry.user_id != user.id:
